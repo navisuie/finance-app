@@ -17,6 +17,15 @@ import type {
   TransactionFilter,
   TransactionInput,
   TransactionPage,
+  AccountChoice,
+  HoldingView,
+  LinkPoll,
+  LinkStart,
+  PlaidAccountView,
+  PlaidItem,
+  PlaidStatus,
+  SyncOutcome,
+  SyncResult,
 } from "./types";
 
 /** Error shape returned by every Rust command. */
@@ -34,9 +43,12 @@ export interface ApiError {
     | "crypto"
     | "db"
     | "io"
-    | "json";
+    | "json"
+    | "plaid";
   message: string;
   retry_after_secs?: number;
+  /** Plaid's error code when code === "plaid" */
+  plaid_code?: string;
 }
 
 export function isApiError(e: unknown): e is ApiError {
@@ -118,6 +130,29 @@ export const api = {
   saveImportProfile: (name: string, mapping: CsvMapping) =>
     invoke<ImportProfile>("save_import_profile", { name, mapping }),
   deleteImportProfile: (id: number) => invoke<void>("delete_import_profile", { id }),
+
+  // Plaid
+  plaidStatus: () => invoke<PlaidStatus>("plaid_status"),
+  plaidSaveCredentials: (environment: string, clientId: string, secret: string) =>
+    invoke<PlaidStatus>("plaid_save_credentials", { environment, clientId, secret }),
+  plaidClearCredentials: () => invoke<PlaidStatus>("plaid_clear_credentials"),
+  plaidListItems: () => invoke<PlaidItem[]>("plaid_list_items"),
+  plaidStartLink: (kind: "banking" | "investments") => invoke<LinkStart>("plaid_start_link", { kind }),
+  plaidStartReconnect: (itemId: number) => invoke<LinkStart>("plaid_start_reconnect", { itemId }),
+  plaidReopenLink: (linkToken: string) => invoke<void>("plaid_reopen_link", { linkToken }),
+  plaidPollLink: (linkToken: string) => invoke<LinkPoll>("plaid_poll_link", { linkToken }),
+  plaidCancelLink: (linkToken: string) => invoke<void>("plaid_cancel_link", { linkToken }),
+  plaidItemAccounts: (itemId: number) => invoke<PlaidAccountView[]>("plaid_item_accounts", { itemId }),
+  plaidLinkAccounts: (itemId: number, choices: AccountChoice[]) =>
+    invoke<{ summary: { created: number; linked: number; unlinked: number }; sync: SyncResult }>(
+      "plaid_link_accounts",
+      { itemId, choices },
+    ),
+  plaidSyncItem: (itemId: number) => invoke<SyncResult>("plaid_sync_item", { itemId }),
+  plaidSyncAll: () => invoke<SyncOutcome[]>("plaid_sync_all"),
+  plaidRemoveItem: (itemId: number, force: boolean) => invoke<void>("plaid_remove_item", { itemId, force }),
+  plaidSandboxAddItem: (kind: "banking" | "investments") => invoke<LinkPoll>("plaid_sandbox_add_item", { kind }),
+  listHoldings: (accountId: number) => invoke<HoldingView[]>("list_holdings", { accountId }),
 };
 
 export function onVaultLocked(cb: (reason: string) => void): Promise<UnlistenFn> {

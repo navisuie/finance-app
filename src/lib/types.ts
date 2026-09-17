@@ -171,3 +171,85 @@ export interface CategoryInput {
   name: string;
   kind: CategoryKind;
 }
+
+// ---- Plaid
+
+export type PlaidEnvironment = "sandbox" | "production";
+
+export interface PlaidStatus {
+  configured: boolean;
+  environment: PlaidEnvironment | null;
+  clientIdHint: string | null;
+}
+
+export interface PlaidItem {
+  id: number;
+  institutionName: string;
+  status: "active" | "needs_reauth" | "error" | string;
+  lastError: string | null;
+  lastSyncedAt: string | null;
+  products: string[];
+  environment: PlaidEnvironment | null;
+  linkedAccountCount: number;
+  createdAt: string;
+}
+
+export interface LinkStart {
+  linkToken: string;
+  url: string;
+  expiration: string | null;
+}
+
+export type LinkPoll =
+  | { state: "waiting" }
+  | { state: "exited"; message: string }
+  | { state: "connected"; itemId: number; institutionName: string }
+  | { state: "reconnected"; itemId: number };
+
+export interface PlaidAccountView {
+  plaidAccountId: string;
+  name: string;
+  officialName: string | null;
+  mask: string | null;
+  accountType: string;
+  subtype: string | null;
+  suggestedKind: AccountKind;
+  balanceCents: number | null;
+  linkedAccountId: number | null;
+  suggestedMatchId: number | null;
+  suggestedSyncFrom: string | null;
+}
+
+export interface AccountChoice {
+  plaidAccountId: string;
+  action: "create" | "link" | "skip";
+  accountId?: number | null;
+  kind?: AccountKind | null;
+  name?: string | null;
+  syncFrom?: string | null;
+}
+
+export interface SyncResult {
+  itemId: number;
+  institutionName: string;
+  transactions: { added: number; modified: number; removed: number; skipped: number };
+  balancesUpdated: number;
+  holdingsUpdated: number;
+  historyPending: boolean;
+}
+
+export interface SyncOutcome {
+  itemId: number;
+  result: SyncResult | null;
+  error: string | null;
+}
+
+export interface HoldingView {
+  ticker: string | null;
+  name: string;
+  securityType: string | null;
+  quantity: number;
+  valueCents: number;
+  costBasisCents: number | null;
+  asOf: string;
+}

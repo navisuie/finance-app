@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use finance_core::settings::DEFAULT_AUTO_LOCK_MINUTES;
 use finance_core::throttle::Throttle;
+use finance_core::plaid::service::{LinkMode, VaultAccess};
 use finance_core::{CoreError, Result, Session};
 
 /// Everything the backend keeps in memory. The session (and with it the
@@ -12,6 +14,14 @@ pub struct AppState {
     pub data_dir: PathBuf,
     inner: Mutex<Inner>,
     pub throttle: Mutex<Throttle>,
+    /// Plaid Link sessions started from this app, by link token. Cleared on lock.
+    pub pending_links: Mutex<HashMap<String, PendingLink>>,
+}
+
+pub struct PendingLink {
+    pub mode: LinkMode,
+    pub url: String,
+    pub started: Instant,
 }
 
 struct Inner {
@@ -30,6 +40,7 @@ impl AppState {
                 auto_lock: Duration::from_secs(DEFAULT_AUTO_LOCK_MINUTES as u64 * 60),
             }),
             throttle: Mutex::new(Throttle::default()),
+            pending_links: Mutex::new(HashMap::new()),
         }
     }
 
@@ -63,6 +74,9 @@ impl AppState {
 
     /// Lock now. Returns true if a session was open.
     pub fn lock(&self) -> bool {
+        if let Ok(mut p) = self.pending_links.lock() {
+            p.clear();
+        }
         self.lock_inner().session.take().is_some()
     }
 
@@ -92,6 +106,17 @@ impl AppState {
         false
     }
 
+    /// Like `with_session`, but does not count as user activity. Used by
+    /// long-running work (bank syncs) so it can never keep the vault open.
+    pub fn with_session_passive<T>(&self, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
+        let mut g = self.lock_inner();
+        Self::expire_if_idle(&mut g);
+        match g.session.as_mut() {
+            Some(s) => f(s),
+            None => Err(CoreError::Locked),
+        }
+    }
+
     /// Run `f` with the open session. Enforces the idle timeout first, so a
     /// request that arrives after the timeout is refused even if the
     /// background timer has not fired yet. Counts as activity.
@@ -103,5 +128,11 @@ impl AppState {
             Some(s) => f(s),
             None => Err(CoreError::Locked),
         }
+    }
+}
+
+impl VaultAccess for AppState {
+    fn with_conn<T>(&self, f: impl FnOnce(&mut finance_core::rusqlite::Connection) -> Result<T>) -> Result<T> {
+        self.with_session_passive(|s| f(s.conn_mut()))
     }
 }

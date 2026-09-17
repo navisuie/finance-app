@@ -11,6 +11,7 @@ pub mod error;
 pub mod import;
 pub mod money;
 pub mod password;
+pub mod plaid;
 pub mod recovery;
 pub mod settings;
 pub mod throttle;
@@ -20,3 +21,5 @@ pub mod vault;
 
 pub use error::{CoreError, Result};
 pub use vault::{Session, Vault};
+/// Re-exported so the app shell can name `Connection` without its own dependency.
+pub use rusqlite;

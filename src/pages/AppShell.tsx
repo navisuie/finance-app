@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { api } from "../lib/api";
 import { Button, Logo } from "../components/ui";
 import { Dashboard } from "./Dashboard";
 import { SettingsPage } from "./SettingsPage";
@@ -30,6 +31,44 @@ function Icon({ d }: { d: string }) {
 export function AppShell({ onLock }: { onLock: () => void }) {
   const [section, setSection] = useState<Section>("dashboard");
   const [hideBalances, setHideBalances] = useState(false);
+  const [syncNote, setSyncNote] = useState<string>();
+  const [dataVersion, setDataVersion] = useState(0);
+
+  // After unlocking, refresh bank data in the background if it's older than 6 hours.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const st = await api.plaidStatus();
+        if (!st.configured) return;
+        const items = await api.plaidListItems();
+        const stale = items.some(
+          (i) =>
+            i.environment === st.environment &&
+            i.linkedAccountCount > 0 &&
+            i.status !== "needs_reauth" &&
+            (!i.lastSyncedAt || Date.now() - Date.parse(i.lastSyncedAt) > 6 * 3600_000),
+        );
+        if (!stale || cancelled) return;
+        setSyncNote("Syncing banks…");
+        const out = await api.plaidSyncAll();
+        if (cancelled) return;
+        const failed = out.filter((o) => o.error).length;
+        const added = out.reduce((n, o) => n + (o.result?.transactions.added ?? 0), 0);
+        setSyncNote(
+          failed > 0
+            ? `${failed} bank${failed === 1 ? "" : "s"} couldn't sync. See Accounts.`
+            : `Banks synced · ${added} new transaction${added === 1 ? "" : "s"}`,
+        );
+        setDataVersion((v) => v + 1);
+      } catch {
+        if (!cancelled) setSyncNote(undefined);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="flex h-full">
@@ -56,6 +95,11 @@ export function AppShell({ onLock }: { onLock: () => void }) {
           ))}
         </nav>
         <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+          {syncNote ? (
+            <button className="block px-3 text-left text-xs text-zinc-500 hover:underline" onClick={() => setSection("accounts")}>
+              {syncNote}
+            </button>
+          ) : null}
           <label className="flex items-center justify-between px-3 text-sm text-zinc-600 dark:text-zinc-400">
             Hide balances
             <input type="checkbox" checked={hideBalances} onChange={(e) => setHideBalances(e.target.checked)} />
@@ -67,9 +111,9 @@ export function AppShell({ onLock }: { onLock: () => void }) {
       </aside>
       <main className="flex-1 overflow-y-auto p-8">
         <PrivacyContext.Provider value={hideBalances}>
-        {section === "dashboard" && <Dashboard onNavigate={setSection} />}
+        {section === "dashboard" && <Dashboard key={dataVersion} onNavigate={setSection} />}
         {section === "settings" && <SettingsPage />}
-        {section === "accounts" && <AccountsPage />}
+        {section === "accounts" && <AccountsPage key={dataVersion} />}
         {section === "transactions" && <TransactionsPage />}
         {section === "budgets" && <Placeholder title="Budgets" phase={3} detail="Monthly limits per category with progress bars." />}
         {section === "goals" && <Placeholder title="Goals" phase={3} detail="Savings targets like a house down payment or emergency fund." />}

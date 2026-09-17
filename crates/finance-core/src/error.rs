@@ -26,6 +26,9 @@ pub enum CoreError {
     Invalid(String),
     #[error("Encryption error.")]
     Crypto,
+    /// An error reported by Plaid or while talking to Plaid.
+    #[error("{message}")]
+    Plaid { code: String, message: String },
     #[error("Database error: {0}")]
     Db(#[from] rusqlite::Error),
     #[error("File error: {0}")]
@@ -48,6 +51,7 @@ impl CoreError {
             CoreError::CorruptVault => "corrupt_vault",
             CoreError::Invalid(_) => "invalid",
             CoreError::Crypto => "crypto",
+            CoreError::Plaid { .. } => "plaid",
             CoreError::Db(_) => "db",
             CoreError::Io(_) => "io",
             CoreError::Json(_) => "json",
@@ -62,6 +66,9 @@ pub struct ErrorPayload {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_secs: Option<u64>,
+    /// Plaid's error_code (e.g. ITEM_LOGIN_REQUIRED) when code == "plaid".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plaid_code: Option<String>,
 }
 
 impl From<&CoreError> for ErrorPayload {
@@ -70,6 +77,10 @@ impl From<&CoreError> for ErrorPayload {
             CoreError::TooManyAttempts { retry_after_secs } => Some(*retry_after_secs),
             _ => None,
         };
-        ErrorPayload { code: e.code(), message: e.to_string(), retry_after_secs }
+        let plaid_code = match e {
+            CoreError::Plaid { code, .. } => Some(code.clone()),
+            _ => None,
+        };
+        ErrorPayload { code: e.code(), message: e.to_string(), retry_after_secs, plaid_code }
     }
 }

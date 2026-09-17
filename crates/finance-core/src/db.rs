@@ -143,6 +143,16 @@ const MIGRATIONS: &[&str] = &[
         ('Taxes','expense'), ('Savings & Investing','transfer'), ('Transfer','transfer'),
         ('Other','expense');
     "#,
+    // v2: Plaid sync bookkeeping.
+    r#"
+    ALTER TABLE plaid_items ADD COLUMN products TEXT NOT NULL DEFAULT 'transactions';
+    ALTER TABLE plaid_items ADD COLUMN last_error TEXT;
+    -- Ignore Plaid transactions before this date (avoids duplicating history
+    -- that was already entered by hand or imported from CSV).
+    ALTER TABLE accounts ADD COLUMN plaid_sync_from TEXT;
+    -- Plaid's detailed category, kept for reference.
+    ALTER TABLE transactions ADD COLUMN plaid_category TEXT;
+    "#,
 ];
 
 pub fn schema_version(conn: &Connection) -> Result<i64> {
@@ -167,6 +177,26 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrates_v1_database_forward() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        tx.execute_batch(MIGRATIONS[0]).unwrap();
+        tx.pragma_update(None, "user_version", 1).unwrap();
+        tx.commit().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (name, kind, created_at) VALUES ('Old', 'checking', 'now')",
+            [],
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        assert_eq!(schema_version(&conn).unwrap(), MIGRATIONS.len() as i64);
+        let from: Option<String> = conn
+            .query_row("SELECT plaid_sync_from FROM accounts WHERE name = 'Old'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(from, None);
+    }
 
     #[test]
     fn migrates_fresh_db_and_is_idempotent() {

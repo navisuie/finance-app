@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { AccountForm, BalanceForm } from "../components/AccountForm";
+import { Connections } from "../components/Connections";
 import { useConfirm } from "../components/Confirm";
 import { ImportWizard } from "../components/ImportWizard";
 import { Money } from "../components/privacy";
@@ -9,7 +10,7 @@ import { useAsync } from "../hooks/useAsync";
 import { GROUPS, KIND_LABELS } from "../lib/accountKinds";
 import { api, errorMessage } from "../lib/api";
 import { formatDate } from "../lib/money";
-import type { Account } from "../lib/types";
+import type { Account, HoldingView } from "../lib/types";
 
 export function AccountsPage({ onDataChanged }: { onDataChanged?: () => void }) {
   const [showArchived, setShowArchived] = useState(false);
@@ -17,6 +18,14 @@ export function AccountsPage({ onDataChanged }: { onDataChanged?: () => void }) 
   const [openId, setOpenId] = useState<number>();
   const accounts = useAsync(() => api.listAccounts(true), []);
   const nw = useAsync(() => api.netWorth(), [accounts.data]);
+  const plaid = useAsync(() => api.plaidStatus(), []);
+  const items = useAsync(() => api.plaidListItems(), []);
+  const reloadAll = useCallback(() => {
+    accounts.reload();
+    items.reload();
+    onDataChanged?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const list = (accounts.data ?? []).filter((a) => showArchived || !a.archived);
 
@@ -63,14 +72,16 @@ export function AccountsPage({ onDataChanged }: { onDataChanged?: () => void }) 
         </div>
       ) : null}
 
+      {plaid.data && items.data ? <Connections status={plaid.data} items={items.data} onChanged={reloadAll} /> : null}
+
       {accounts.error ? <p className="text-sm text-red-600">{accounts.error}</p> : null}
 
       {accounts.data && list.length === 0 ? (
         <Card>
           <p className="font-medium">No accounts yet</p>
           <p className="mt-1 text-sm text-zinc-500">
-            Add your HYSA, checking, brokerage, 401(k), Roth IRA and any cards or loans. Live syncing with Plaid comes in
-            phase 6; for now, enter balances yourself or import CSVs.
+            Connect a bank above to add accounts automatically, or add your HYSA, checking, brokerage, 401(k), Roth IRA,
+            cards and loans by hand.
           </p>
           <Button className="mt-4" onClick={() => setAdding(true)}>
             Add your first account
@@ -121,7 +132,14 @@ function AccountCard({ account: a, onOpen }: { account: Account; onOpen: () => v
     >
       <div className="flex items-start justify-between gap-2">
         <div>
-          <p className="font-medium">{a.name}</p>
+          <p className="font-medium">
+            {a.name}
+            {a.linked ? (
+              <span className="ml-2 rounded bg-brand-50 px-1.5 py-0.5 align-middle text-[10px] font-medium text-brand-700 dark:bg-brand-900/40 dark:text-brand-500">
+                SYNCED
+              </span>
+            ) : null}
+          </p>
           <p className="text-xs text-zinc-500">
             {KIND_LABELS[a.kind]}
             {a.institution ? ` · ${a.institution}` : ""}
@@ -144,6 +162,7 @@ function AccountDetail({ id, onBack, onChanged }: { id: number; onBack: () => vo
   const history = useAsync(() => api.balanceHistory(id), [id]);
   const all = useAsync(() => api.listAccounts(true), [id]);
   const categories = useAsync(() => api.listCategories(), []);
+  const holdings = useAsync(() => api.listHoldings(id), [id]);
   const [editing, setEditing] = useState(false);
   const [balanceOpen, setBalanceOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -155,6 +174,7 @@ function AccountDetail({ id, onBack, onChanged }: { id: number; onBack: () => vo
   const refresh = () => {
     account.reload();
     history.reload();
+    holdings.reload();
     all.reload();
     setRefreshKey((k) => k + 1);
     onChanged();
@@ -224,6 +244,11 @@ function AccountDetail({ id, onBack, onChanged }: { id: number; onBack: () => vo
             {a.last4 ? ` · ending ${a.last4}` : ""}
             {a.archived ? " · Archived" : ""}
           </p>
+          {a.linked ? (
+            <p className="mt-1 text-xs text-brand-700 dark:text-brand-500">
+              Synced through Plaid. Balances update each time you sync; manual edits to the balance are replaced on the next sync.
+            </p>
+          ) : null}
         </div>
         <div className="text-right">
           <Money cents={a.balanceCents} className="text-3xl font-semibold" />
@@ -250,6 +275,8 @@ function AccountDetail({ id, onBack, onChanged }: { id: number; onBack: () => vo
         </Button>
       </div>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
+
+      {holdings.data && holdings.data.length > 0 ? <HoldingsTable holdings={holdings.data} /> : null}
 
       <div className="grid grid-cols-[1fr_18rem] gap-6">
         <div className="space-y-2">
@@ -320,5 +347,43 @@ function AccountDetail({ id, onBack, onChanged }: { id: number; onBack: () => vo
       ) : null}
       {confirmDialog}
     </div>
+  );
+}
+
+function HoldingsTable({ holdings }: { holdings: HoldingView[] }) {
+  const total = holdings.reduce((s, h) => s + h.valueCents, 0);
+  return (
+    <Card title={`Holdings · as of ${formatDate(holdings[0].asOf)}`}>
+      <table className="w-full text-sm">
+        <thead className="text-left text-xs text-zinc-500">
+          <tr>
+            <th className="py-1 font-medium">Security</th>
+            <th className="py-1 text-right font-medium">Shares</th>
+            <th className="py-1 text-right font-medium">Value</th>
+            <th className="py-1 text-right font-medium">Gain / loss</th>
+            <th className="py-1 text-right font-medium">Weight</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          {holdings.map((h, i) => (
+            <tr key={i}>
+              <td className="py-1.5">
+                <span className="font-medium">{h.ticker ?? "—"}</span> <span className="text-zinc-500">{h.name}</span>
+              </td>
+              <td className="py-1.5 text-right tabular-nums">{h.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })}</td>
+              <td className="py-1.5 text-right">
+                <Money cents={h.valueCents} />
+              </td>
+              <td className="py-1.5 text-right">
+                {h.costBasisCents !== null ? <Money cents={h.valueCents - h.costBasisCents} signed colored /> : "—"}
+              </td>
+              <td className="py-1.5 text-right tabular-nums text-zinc-500">
+                {total > 0 ? `${((h.valueCents / total) * 100).toFixed(1)}%` : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
   );
 }

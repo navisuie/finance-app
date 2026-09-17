@@ -136,23 +136,30 @@ pub fn get(conn: &Connection, id: i64) -> Result<Account> {
 }
 
 pub fn create(conn: &mut Connection, input: &AccountInput) -> Result<Account> {
-    let c = validate(input)?;
     let tx = conn.transaction()?;
-    tx.execute(
+    let id = insert(&tx, input)?;
+    tx.commit()?;
+    get(conn, id)
+}
+
+/// Insert an account (and optional opening balance) without starting a
+/// transaction; callers that need atomicity wrap it in one.
+pub fn insert(conn: &Connection, input: &AccountInput) -> Result<i64> {
+    let c = validate(input)?;
+    conn.execute(
         "INSERT INTO accounts (name, kind, institution, last4, is_asset, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![c.name, c.kind, c.institution, c.last4, c.is_asset, now_rfc3339()],
     )?;
-    let id = tx.last_insert_rowid();
+    let id = conn.last_insert_rowid();
     if let Some(cents) = input.balance_cents {
         let as_of = match &input.balance_as_of {
             Some(d) => parse_date(d)?,
             None => crate::util::today(),
         };
-        upsert_balance(&tx, id, &as_of, cents, "manual")?;
+        upsert_balance(conn, id, &as_of, cents, "manual")?;
     }
-    tx.commit()?;
-    get(conn, id)
+    Ok(id)
 }
 
 pub fn update(conn: &Connection, id: i64, input: &AccountInput) -> Result<Account> {

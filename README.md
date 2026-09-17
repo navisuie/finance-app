@@ -2,12 +2,13 @@
 
 A personal finance tracker for macOS. Your data stays on your Mac in an encrypted database. There is no server and no account to sign up for.
 
-**Status: phase 2 of 6.** Done so far:
+**Status: phases 1, 2 and 6 are done.**
 
 - **Phase 1:** the vault, lock screen, auto-lock and recovery key.
 - **Phase 2:** accounts, balance history, net worth, transactions, categories and CSV import.
+- **Phase 6:** live bank sync through Plaid.
 
-Budgets, calculators and Plaid bank sync come in later phases.
+Budgets, goals, calculators, Touch ID and backups come next.
 
 ## Setup (one time)
 
@@ -34,7 +35,7 @@ npm install
 ```bash
 npm run app          # development build, opens the app window
 npm test             # frontend unit tests (21)
-cargo test -p finance-core   # core, security, import tests (53)
+cargo test -p finance-core   # core, security, import and Plaid tests
 npm run app:build    # release build -> src-tauri/../target/release/bundle/
 ```
 
@@ -53,6 +54,61 @@ To regenerate the full macOS icon set from `app-icon.png`, run `npx tauri icon a
     - **Saved settings.** The column choices are remembered for that account next time. You can also save them as a named profile.
     - **Privacy.** The file is read on your Mac and never uploaded.
 * **Hide balances** (bottom of the sidebar) replaces every amount with •••••.
+
+## Connecting banks with Plaid
+
+### Setup
+
+1. Create a free account at [dashboard.plaid.com](https://dashboard.plaid.com). On the free Trial plan you can connect up to **10 institutions** in Production. Removing a connection does not give the slot back, so connect deliberately.
+2. In the Plaid Dashboard, open **Developers → Keys**. Copy your **client ID** and a **secret**. Each environment has its own secret.
+3. In the app, open **Settings → Bank connections**. Pick the environment, paste both keys, and click **Verify and save**. The app checks the keys with Plaid before storing them.
+
+### Try Sandbox first
+
+With the Sandbox keys, go to **Accounts → Connect a bank**. Either:
+
+- click **Add test bank**, which creates a test connection instantly, or
+- choose a bank in the browser and sign in with `user_good` / `pass_good`.
+
+### Connecting your real accounts
+
+Switch to your **Production** secret in Settings, then use **Connect a bank**:
+
+- **Bank or credit card** syncs balances and transactions (up to 2 years of history).
+- **Investments or retirement** syncs balances and holdings for brokerage accounts, 401(k)s and IRAs.
+
+Plaid opens in your default browser. You sign in to your bank on Plaid's site, so your bank password never passes through this app. When you finish, the app picks up the connection automatically.
+
+Next you choose what to do with each account: **add** it as a new account, **link** it to an account you already track, or **skip** it. When you link an existing account, Plaid history starts the day after your latest existing transaction, so nothing gets duplicated.
+
+### Syncing
+
+- Use **Sync** or **Sync all** on the Accounts page.
+- After you unlock, the app also syncs in the background if the data is more than 6 hours old.
+- A background sync doesn't reset the auto-lock timer.
+
+### What sync does
+
+- **Balances:** each account gets today's balance.
+- **Transactions:** new, changed and removed transactions are applied.
+- **Categories:**
+    - If you've categorized that payee before, your choice is used.
+    - Otherwise the app uses Plaid's category.
+    - When a pending charge posts, it keeps the category you gave the pending one.
+- **Holdings:** investment holdings are replaced with the latest.
+
+### Problems and disconnecting
+
+- **Sign-in needed.** If a bank asks you to sign in again, the connection shows **Reconnect**.
+- **Disconnect** revokes Plaid's access to that bank. Its accounts and their history stay in the app as manual accounts.
+
+### How it's secured
+
+- **Stored keys.** The Plaid client ID and secret, and each bank's access token, are stored inside the encrypted vault, the same AES-256 database as the rest of your data. They exist in memory only while the vault is unlocked, and the secret is never sent to the app's interface.
+- **Where the app connects.** All Plaid calls are made by the Rust backend over HTTPS, and only to `sandbox.plaid.com` or `production.plaid.com`. Redirects are never followed. The interface itself still has no network access.
+- **Opening the browser.** The app opens a Plaid link in your browser only after checking that it is an `https://…plaid.com` address.
+- **Auto-lock during sync.** Network calls are never made while the vault is held open. If the vault auto-locks during a sync, nothing is saved.
+- **Test vs real connections.** Connections made with Sandbox keys and with Production keys are kept separate. A test connection can't be synced with Production keys, and the reverse.
 
 ## Where your data lives
 
@@ -79,7 +135,7 @@ recovery key ────Argon2id──▶ KEK₂ ──AES-256-GCM unwrap──
 * **Recovery key.** 256 random bits, shown once, in 13 groups of 4 characters. Using it resets your password and issues a new recovery key; the old one stops working.
 * **Changing your password** re-wraps the data key only. It is instant and the recovery key keeps working.
 * **Auto-lock is enforced by the Rust backend**, not just the UI. After the idle period (5 minutes by default, adjustable from 1 to 60), the database connection is closed and SQLCipher wipes its key from memory. The app also locks when the window closes.
-* **Locked-down webview.** A strict Content Security Policy allows no remote scripts and no network access from the UI. The webview has no permissions for the filesystem, shell, or HTTP. All sensitive work runs in Rust commands, and every data command refuses to run while the vault is locked.
+* **Locked-down webview.** A strict Content Security Policy allows no remote scripts and no network access from the UI (Plaid calls are made by the Rust backend). The webview has no permissions for the filesystem, shell, or HTTP. All sensitive work runs in Rust commands, and every data command refuses to run while the vault is locked.
 * **Minimal data.** Store only the last 4 digits of account numbers. The schema enforces this.
 
 ### Your part
@@ -91,7 +147,7 @@ recovery key ────Argon2id──▶ KEK₂ ──AES-256-GCM unwrap──
 ## Project layout
 
 ```
-crates/finance-core/   Rust: vault, crypto, schema, accounts, transactions, CSV import (unit-tested)
+crates/finance-core/   Rust: vault, crypto, schema, accounts, transactions, CSV import, Plaid (unit-tested)
 src-tauri/             Rust: Tauri shell, IPC commands, auto-lock timer
 src/                   React + TypeScript UI (Tailwind)
 ```
@@ -103,4 +159,4 @@ src/                   React + TypeScript UI (Tailwind)
 3. Dashboard, budgets, goals
 4. Calculators (retirement, Monte Carlo, savings goal, home affordability, rent vs buy, debt payoff)
 5. Touch ID unlock, encrypted backups, signed build
-6. **Live bank sync with Plaid.** Plaid Hosted Link opens in your browser. The client secret is kept in the macOS Keychain, and access tokens stay inside the encrypted database.
+6. **Live bank sync with Plaid** ✅

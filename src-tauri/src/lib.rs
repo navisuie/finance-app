@@ -1,3 +1,4 @@
+mod bank;
 mod commands;
 mod data;
 mod state;
@@ -78,6 +79,22 @@ pub fn run() {
             data::list_import_profiles,
             data::save_import_profile,
             data::delete_import_profile,
+            bank::plaid_status,
+            bank::plaid_save_credentials,
+            bank::plaid_clear_credentials,
+            bank::plaid_list_items,
+            bank::plaid_start_link,
+            bank::plaid_start_reconnect,
+            bank::plaid_reopen_link,
+            bank::plaid_poll_link,
+            bank::plaid_cancel_link,
+            bank::plaid_item_accounts,
+            bank::plaid_link_accounts,
+            bank::plaid_sync_item,
+            bank::plaid_sync_all,
+            bank::plaid_remove_item,
+            bank::plaid_sandbox_add_item,
+            bank::list_holdings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the finance app");

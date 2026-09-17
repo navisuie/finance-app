@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, PasswordField } from "../components/ui";
 import { StrengthMeter } from "../components/StrengthMeter";
 import { CategoryManager } from "../components/CategoryManager";
+import { PlaidSettings } from "../components/PlaidSettings";
 import { api, errorMessage, type AppSettings } from "../lib/api";
 import type { ImportProfile } from "../lib/types";
 import { MIN_LENGTH } from "../lib/password";
@@ -50,6 +51,8 @@ export function SettingsPage() {
         </div>
       </Card>
 
+      <PlaidSettings />
+
       <CategoryManager />
 
       <ImportProfiles />
@@ -59,7 +62,6 @@ export function SettingsPage() {
       <Card title="Coming later">
         <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-500">
           <li>Touch ID unlock and encrypted backups (phase 5)</li>
-          <li>Plaid keys and connected institutions (phase 6)</li>
         </ul>
       </Card>
     </div>
