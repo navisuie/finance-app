@@ -1,7 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, PasswordField } from "../components/ui";
 import { StrengthMeter } from "../components/StrengthMeter";
+import { CategoryManager } from "../components/CategoryManager";
 import { api, errorMessage, type AppSettings } from "../lib/api";
+import type { ImportProfile } from "../lib/types";
 import { MIN_LENGTH } from "../lib/password";
 
 const LOCK_OPTIONS = [1, 2, 5, 10, 15, 30, 60];
@@ -48,6 +50,10 @@ export function SettingsPage() {
         </div>
       </Card>
 
+      <CategoryManager />
+
+      <ImportProfiles />
+
       <ChangePassword />
 
       <Card title="Coming later">
@@ -57,6 +63,33 @@ export function SettingsPage() {
         </ul>
       </Card>
     </div>
+  );
+}
+
+function ImportProfiles() {
+  const [profiles, setProfiles] = useState<ImportProfile[]>();
+  const load = () => api.listImportProfiles().then(setProfiles).catch(() => setProfiles([]));
+  useEffect(() => {
+    load();
+  }, []);
+  if (!profiles || profiles.length === 0) return null;
+  return (
+    <Card title="Saved CSV import settings">
+      <ul className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+        {profiles.map((p) => (
+          <li key={p.id} className="flex items-center justify-between py-1.5">
+            <span>{p.name}</span>
+            <button
+              className="text-xs text-zinc-400 hover:text-red-600"
+              onClick={() => api.deleteImportProfile(p.id).then(load)}
+              aria-label={`Delete ${p.name}`}
+            >
+              Remove
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 

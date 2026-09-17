@@ -1,4 +1,5 @@
 mod commands;
+mod data;
 mod state;
 
 use std::time::Duration;
@@ -50,6 +51,33 @@ pub fn run() {
             commands::get_settings,
             commands::set_auto_lock,
             commands::change_password,
+            data::list_accounts,
+            data::get_account,
+            data::create_account,
+            data::update_account,
+            data::set_account_archived,
+            data::delete_account,
+            data::set_balance,
+            data::delete_balance,
+            data::balance_history,
+            data::net_worth,
+            data::list_categories,
+            data::create_category,
+            data::update_category,
+            data::delete_category,
+            data::query_transactions,
+            data::create_transaction,
+            data::update_transaction,
+            data::delete_transactions,
+            data::set_transactions_category,
+            data::suggest_category,
+            data::period_summary,
+            data::import_detect,
+            data::import_preview,
+            data::import_commit,
+            data::list_import_profiles,
+            data::save_import_profile,
+            data::delete_import_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the finance app");

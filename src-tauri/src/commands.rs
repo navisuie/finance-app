@@ -21,7 +21,7 @@ impl From<CoreError> for CmdError {
     }
 }
 
-type CmdResult<T> = std::result::Result<T, CmdError>;
+pub(crate) type CmdResult<T> = std::result::Result<T, CmdError>;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +38,7 @@ pub struct RecoveryKeyOut {
 
 /// Run CPU-heavy key derivation off the main thread so the window stays
 /// responsive.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     app: AppHandle,
     f: impl FnOnce(&AppState) -> finance_core::Result<T> + Send + 'static,
 ) -> CmdResult<T> {

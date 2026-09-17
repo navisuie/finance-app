@@ -1,0 +1,173 @@
+// Mirrors the Rust types in crates/finance-core (serde camelCase).
+
+export type AccountKind =
+  | "checking"
+  | "savings"
+  | "hysa"
+  | "brokerage"
+  | "401k"
+  | "roth_ira"
+  | "traditional_ira"
+  | "hsa"
+  | "credit_card"
+  | "loan"
+  | "mortgage"
+  | "other";
+
+export interface Account {
+  id: number;
+  name: string;
+  kind: AccountKind;
+  institution: string | null;
+  last4: string | null;
+  isAsset: boolean;
+  archived: boolean;
+  linked: boolean;
+  balanceCents: number | null;
+  balanceAsOf: string | null;
+  transactionCount: number;
+}
+
+export interface AccountInput {
+  name: string;
+  kind: AccountKind;
+  institution?: string | null;
+  last4?: string | null;
+  isAsset?: boolean | null;
+  balanceCents?: number | null;
+  balanceAsOf?: string | null;
+}
+
+export interface BalanceSnapshot {
+  id: number;
+  accountId: number;
+  asOf: string;
+  amountCents: number;
+  source: string;
+}
+
+export interface NetWorth {
+  assetsCents: number;
+  liabilitiesCents: number;
+  netCents: number;
+}
+
+export type CategoryKind = "income" | "expense" | "transfer";
+
+export interface Category {
+  id: number;
+  name: string;
+  kind: CategoryKind;
+  transactionCount: number;
+}
+
+export interface Transaction {
+  id: number;
+  accountId: number;
+  accountName: string;
+  postedOn: string;
+  amountCents: number;
+  payee: string;
+  categoryId: number | null;
+  categoryName: string | null;
+  notes: string | null;
+  pending: boolean;
+  source: "manual" | "csv" | "plaid" | string;
+}
+
+export interface TransactionInput {
+  accountId: number;
+  postedOn: string;
+  amountCents: number;
+  payee: string;
+  categoryId: number | null;
+  notes: string | null;
+}
+
+/** categoryId 0 = uncategorized */
+export interface TransactionFilter {
+  accountId?: number;
+  categoryId?: number;
+  from?: string;
+  to?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface TransactionPage {
+  items: Transaction[];
+  total: number;
+  inflowCents: number;
+  outflowCents: number;
+}
+
+export interface PeriodSummary {
+  incomeCents: number;
+  spendingCents: number;
+  transactionCount: number;
+}
+
+export type AmountMapping =
+  | { mode: "single"; column: number; negate: boolean }
+  | { mode: "split"; debitColumn: number; creditColumn: number };
+
+export interface CsvMapping {
+  skipRows: number;
+  headerRow: number | null;
+  dateColumn: number;
+  dateFormat: string;
+  payeeColumn: number;
+  amount: AmountMapping;
+  categoryColumn: number | null;
+  notesColumn: number | null;
+}
+
+export interface Detection {
+  columns: string[];
+  sample: string[][];
+  dataRowCount: number;
+  mapping: CsvMapping | null;
+  fromPreviousImport: boolean;
+  dateFormats: { format: string; example: string }[];
+}
+
+export type RowStatus = "new" | "duplicate" | "possible_duplicate" | "error";
+
+export interface PreviewRow {
+  line: number;
+  postedOn: string | null;
+  amountCents: number | null;
+  payee: string;
+  categoryId: number | null;
+  categoryName: string | null;
+  notes: string | null;
+  status: RowStatus;
+  message: string | null;
+}
+
+export interface ImportPreview {
+  rows: PreviewRow[];
+  newCount: number;
+  duplicateCount: number;
+  possibleDuplicateCount: number;
+  errorCount: number;
+  firstDate: string | null;
+  lastDate: string | null;
+}
+
+export interface ImportResult {
+  inserted: number;
+  skipped: number;
+}
+
+export interface ImportProfile {
+  id: number;
+  name: string;
+  mapping: CsvMapping;
+}
+
+export interface CategoryInput {
+  name: string;
+  kind: CategoryKind;
+}

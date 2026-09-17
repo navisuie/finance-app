@@ -31,6 +31,3 @@ textarea,
   user-select: text;
 }
 
-.money-hidden {
-  filter: blur(6px);
-}

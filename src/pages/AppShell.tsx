@@ -3,6 +3,9 @@ import { Button, Logo } from "../components/ui";
 import { Dashboard } from "./Dashboard";
 import { SettingsPage } from "./SettingsPage";
 import { Placeholder } from "./Placeholder";
+import { AccountsPage } from "./AccountsPage";
+import { TransactionsPage } from "./TransactionsPage";
+import { PrivacyContext } from "../components/privacy";
 
 type Section = "dashboard" | "accounts" | "transactions" | "budgets" | "goals" | "calculators" | "settings";
 
@@ -63,13 +66,15 @@ export function AppShell({ onLock }: { onLock: () => void }) {
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto p-8">
-        {section === "dashboard" && <Dashboard hideBalances={hideBalances} />}
+        <PrivacyContext.Provider value={hideBalances}>
+        {section === "dashboard" && <Dashboard onNavigate={setSection} />}
         {section === "settings" && <SettingsPage />}
-        {section === "accounts" && <Placeholder title="Accounts" phase={2} detail="Add your HYSA, brokerage, 401(k), Roth IRA and more, then connect them live with Plaid in phase 6." />}
-        {section === "transactions" && <Placeholder title="Transactions" phase={2} detail="Manual entry and CSV import with duplicate detection." />}
+        {section === "accounts" && <AccountsPage />}
+        {section === "transactions" && <TransactionsPage />}
         {section === "budgets" && <Placeholder title="Budgets" phase={3} detail="Monthly limits per category with progress bars." />}
         {section === "goals" && <Placeholder title="Goals" phase={3} detail="Savings targets like a house down payment or emergency fund." />}
         {section === "calculators" && <Placeholder title="Calculators" phase={4} detail="Retirement, Monte Carlo, savings goal, home affordability, rent vs buy, and debt payoff." />}
+        </PrivacyContext.Provider>
       </main>
     </div>
   );
