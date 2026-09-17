@@ -12,14 +12,25 @@ export function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Kept in a ref so a caller passing an inline onClose doesn't re-run the
+  // effect below on every render, which would steal focus while typing.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeRef.current();
     };
     window.addEventListener("keydown", onKey);
-    ref.current?.querySelector<HTMLElement>("input, select, textarea, button")?.focus();
+    // Focus the first field once, when the dialog opens. Fields come before
+    // buttons so typing starts where you'd expect.
+    const box = ref.current;
+    const field = box?.querySelector<HTMLElement>(
+      "input:not([type='hidden']):not([type='checkbox']), select, textarea",
+    );
+    (field ?? box?.querySelector<HTMLElement>("button"))?.focus();
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-6" onMouseDown={onClose}>
