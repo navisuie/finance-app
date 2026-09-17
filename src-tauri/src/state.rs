@@ -16,7 +16,13 @@ pub struct AppState {
     pub throttle: Mutex<Throttle>,
     /// Plaid Link sessions started from this app, by link token. Cleared on lock.
     pub pending_links: Mutex<HashMap<String, PendingLink>>,
+    /// When the master password was last confirmed for live (Production)
+    /// bank actions. Cleared on lock.
+    production_confirmed_at: Mutex<Option<Instant>>,
 }
+
+/// How long one password confirmation covers Production actions.
+pub const PRODUCTION_GRACE: Duration = Duration::from_secs(10 * 60);
 
 pub struct PendingLink {
     pub mode: LinkMode,
@@ -41,6 +47,7 @@ impl AppState {
             }),
             throttle: Mutex::new(Throttle::default()),
             pending_links: Mutex::new(HashMap::new()),
+            production_confirmed_at: Mutex::new(None),
         }
     }
 
@@ -76,6 +83,9 @@ impl AppState {
     pub fn lock(&self) -> bool {
         if let Ok(mut p) = self.pending_links.lock() {
             p.clear();
+        }
+        if let Ok(mut c) = self.production_confirmed_at.lock() {
+            *c = None;
         }
         self.lock_inner().session.take().is_some()
     }
@@ -127,6 +137,35 @@ impl AppState {
         match g.session.as_mut() {
             Some(s) => f(s),
             None => Err(CoreError::Locked),
+        }
+    }
+}
+
+impl AppState {
+    /// True while a recent password confirmation still covers Production.
+    pub fn production_confirmed(&self) -> bool {
+        self.production_confirmed_at
+            .lock()
+            .ok()
+            .and_then(|c| *c)
+            .is_some_and(|at| at.elapsed() < PRODUCTION_GRACE)
+    }
+
+    /// Confirm the master password for Production actions.
+    pub fn confirm_production(&self, password: &str) -> Result<()> {
+        self.with_session_passive(|s| s.verify_password(password))?;
+        if let Ok(mut c) = self.production_confirmed_at.lock() {
+            *c = Some(Instant::now());
+        }
+        Ok(())
+    }
+
+    /// Require a recent confirmation, or `PasswordRequired`.
+    pub fn require_production_confirmed(&self) -> Result<()> {
+        if self.production_confirmed() {
+            Ok(())
+        } else {
+            Err(CoreError::PasswordRequired)
         }
     }
 }

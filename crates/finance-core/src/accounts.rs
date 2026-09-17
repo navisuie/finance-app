@@ -10,6 +10,39 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, Result};
 use crate::util::{now_rfc3339, optional_text, parse_date, required_text};
 
+/// Which set of data a query covers. The app shows test data while Plaid
+/// Sandbox is active and real data otherwise, so the two never blend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Scope {
+    /// Real accounts only (the default).
+    #[default]
+    Real,
+    /// Accounts created by a Plaid Sandbox connection.
+    Test,
+    /// Everything, used where both make sense (account pickers, exports).
+    All,
+}
+
+impl Scope {
+    /// SQL fragment for the `accounts` alias `a`.
+    pub fn sql(self) -> &'static str {
+        match self {
+            Scope::Real => "a.is_test = 0",
+            Scope::Test => "a.is_test = 1",
+            Scope::All => "1 = 1",
+        }
+    }
+
+    pub fn matches(self, is_test: bool) -> bool {
+        match self {
+            Scope::Real => !is_test,
+            Scope::Test => is_test,
+            Scope::All => true,
+        }
+    }
+}
+
 pub const KINDS: &[&str] = &[
     "checking", "savings", "hysa", "brokerage", "401k", "roth_ira", "traditional_ira", "hsa",
     "credit_card", "loan", "mortgage", "other",
@@ -30,6 +63,9 @@ pub struct Account {
     pub is_asset: bool,
     pub archived: bool,
     pub linked: bool,
+    /// Created from a Plaid Sandbox connection: fake data, kept out of net
+    /// worth and the dashboard.
+    pub is_test: bool,
     pub balance_cents: Option<i64>,
     pub balance_as_of: Option<String>,
     pub transaction_count: i64,
@@ -96,7 +132,7 @@ fn validate(input: &AccountInput) -> Result<Clean> {
 
 const SELECT: &str = "
     SELECT a.id, a.name, a.kind, a.institution, a.last4, a.is_asset, a.archived,
-           a.plaid_account_id IS NOT NULL,
+           a.plaid_account_id IS NOT NULL, a.is_test,
            b.amount_cents, b.as_of,
            (SELECT count(*) FROM transactions t WHERE t.account_id = a.id)
     FROM accounts a
@@ -114,19 +150,56 @@ fn map_row(r: &Row) -> rusqlite::Result<Account> {
         is_asset: r.get(5)?,
         archived: r.get(6)?,
         linked: r.get(7)?,
-        balance_cents: r.get(8)?,
-        balance_as_of: r.get(9)?,
-        transaction_count: r.get(10)?,
+        is_test: r.get(8)?,
+        balance_cents: r.get(9)?,
+        balance_as_of: r.get(10)?,
+        transaction_count: r.get(11)?,
     })
 }
 
-pub fn list(conn: &Connection, include_archived: bool) -> Result<Vec<Account>> {
+/// List accounts within a scope.
+pub fn list(conn: &Connection, include_archived: bool, scope: Scope) -> Result<Vec<Account>> {
     let sql = format!(
-        "{SELECT} WHERE (?1 OR a.archived = 0) ORDER BY a.archived, a.is_asset DESC, a.name COLLATE NOCASE"
+        "{SELECT} WHERE (?1 OR a.archived = 0) AND {}
+         ORDER BY a.archived, a.is_test, a.is_asset DESC, a.name COLLATE NOCASE",
+        scope.sql()
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([include_archived], map_row)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Mark an account as test data (or not).
+pub fn set_is_test(conn: &Connection, id: i64, is_test: bool) -> Result<()> {
+    conn.execute("UPDATE accounts SET is_test = ?1 WHERE id = ?2", params![is_test, id])?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TestDataSummary {
+    pub accounts: i64,
+    pub transactions: i64,
+}
+
+pub fn test_data_summary(conn: &Connection) -> Result<TestDataSummary> {
+    Ok(conn.query_row(
+        "SELECT (SELECT count(*) FROM accounts WHERE is_test = 1),
+                (SELECT count(*) FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE a.is_test = 1)",
+        [],
+        |r| Ok(TestDataSummary { accounts: r.get(0)?, transactions: r.get(1)? }),
+    )?)
+}
+
+/// Delete every test account with its transactions, balances and holdings.
+/// Real accounts are never touched.
+pub fn delete_test_data(conn: &mut Connection) -> Result<TestDataSummary> {
+    let summary = test_data_summary(conn)?;
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM accounts WHERE is_test = 1", [])?;
+    tx.execute("DELETE FROM plaid_items WHERE access_token LIKE 'access-sandbox-%'", [])?;
+    tx.commit()?;
+    Ok(summary)
 }
 
 pub fn get(conn: &Connection, id: i64) -> Result<Account> {
@@ -229,10 +302,10 @@ pub fn balance_history(conn: &Connection, account_id: i64) -> Result<Vec<Balance
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Current net worth from each open account's latest balance.
-pub fn net_worth(conn: &Connection) -> Result<NetWorth> {
+/// Current net worth from each open account's latest balance, within a scope.
+pub fn net_worth(conn: &Connection, scope: Scope) -> Result<NetWorth> {
     let mut nw = NetWorth::default();
-    for a in list(conn, false)? {
+    for a in list(conn, false, scope)? {
         let bal = a.balance_cents.unwrap_or(0);
         if a.is_asset {
             nw.assets_cents += bal;
@@ -304,13 +377,13 @@ pub(crate) mod tests {
         card.balance_cents = Some(50_000);
         let card = create(&mut c, &card).unwrap();
         assert!(!card.is_asset);
-        let nw = net_worth(&c).unwrap();
+        let nw = net_worth(&c, Scope::Real).unwrap();
         assert_eq!(nw, NetWorth { assets_cents: 300_000, liabilities_cents: 50_000, net_cents: 250_000 });
 
         set_archived(&c, card.id, true).unwrap();
-        assert_eq!(net_worth(&c).unwrap().net_cents, 300_000);
-        assert_eq!(list(&c, false).unwrap().len(), 1);
-        assert_eq!(list(&c, true).unwrap().len(), 2);
+        assert_eq!(net_worth(&c, Scope::Real).unwrap().net_cents, 300_000);
+        assert_eq!(list(&c, false, Scope::Real).unwrap().len(), 1);
+        assert_eq!(list(&c, true, Scope::Real).unwrap().len(), 2);
     }
 
     #[test]
@@ -327,6 +400,31 @@ pub(crate) mod tests {
         assert_eq!(h[0].amount_cents, 250);
         delete_balance(&c, h[0].id).unwrap();
         assert_eq!(get(&c, a.id).unwrap().balance_cents, Some(100));
+    }
+
+    #[test]
+    fn test_accounts_are_hidden_and_removable() {
+        let mut c = conn();
+        let mut real = input("Real checking", "checking");
+        real.balance_cents = Some(100_000);
+        let real = create(&mut c, &real).unwrap();
+        let mut fake = input("Plaid Checking", "checking");
+        fake.balance_cents = Some(999_999);
+        let fake = create(&mut c, &fake).unwrap();
+        set_is_test(&c, fake.id, true).unwrap();
+
+        assert_eq!(list(&c, true, Scope::Real).unwrap().len(), 1);
+        assert_eq!(list(&c, true, Scope::Test).unwrap().len(), 1);
+        assert_eq!(list(&c, true, Scope::All).unwrap().len(), 2);
+        assert!(list(&c, true, Scope::Test).unwrap().iter().all(|a| a.is_test));
+        assert_eq!(net_worth(&c, Scope::Real).unwrap().net_cents, 100_000, "real net worth ignores test data");
+        assert_eq!(net_worth(&c, Scope::Test).unwrap().net_cents, 999_999, "Sandbox has its own totals");
+
+        assert_eq!(test_data_summary(&c).unwrap().accounts, 1);
+        let removed = delete_test_data(&mut c).unwrap();
+        assert_eq!(removed.accounts, 1);
+        assert_eq!(list(&c, true, Scope::All).unwrap().len(), 1);
+        assert_eq!(get(&c, real.id).unwrap().name, "Real checking");
     }
 
     #[test]

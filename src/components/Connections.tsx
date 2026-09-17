@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { api, errorMessage } from "../lib/api";
-import type { PlaidEnvironment, PlaidItem, PlaidStatus } from "../lib/types";
+import { announceEnvironmentChange } from "../hooks/usePlaidStatus";
+import type { PlaidItem, PlaidStatus } from "../lib/types";
 import { useConfirm } from "./Confirm";
 import { ConnectBank, type ConnectMode } from "./ConnectBank";
-import { Segmented } from "./Segmented";
+import { EnvironmentSwitch } from "./EnvironmentSwitch";
 import { Button, Card } from "./ui";
 
 function ago(iso: string | null): string {
@@ -30,7 +31,6 @@ export function Connections({
   onOpenSettings?: () => void;
 }) {
   const [connect, setConnect] = useState<ConnectMode>();
-  const [switching, setSwitching] = useState(false);
   const [syncing, setSyncing] = useState<Set<number>>(new Set());
   const [messages, setMessages] = useState<Record<number, string>>({});
   const [confirm, dialog] = useConfirm();
@@ -54,18 +54,6 @@ export function Connections({
         return n;
       });
       onChanged();
-    }
-  };
-
-  const switchEnvironment = async (env: PlaidEnvironment) => {
-    setSwitching(true);
-    try {
-      await api.plaidSetEnvironment(env);
-      onEnvironmentChanged();
-    } catch (e) {
-      setMessages((m) => ({ ...m, 0: errorMessage(e) }));
-    } finally {
-      setSwitching(false);
     }
   };
 
@@ -120,18 +108,15 @@ export function Connections({
       <div className="flex flex-wrap items-center justify-between gap-2 px-1">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-zinc-500">Bank connections</h2>
-          <Segmented
-            label="Plaid environment"
-            value={status.environment}
-            disabled={switching}
-            onChange={switchEnvironment}
-            options={[
-              { value: "sandbox", label: "Sandbox", title: "Test banks with fake data" },
-              { value: "production", label: "Production", title: "Your real banks" },
-            ]}
+          <EnvironmentSwitch
+            environment={status.environment}
+            onChanged={() => {
+              announceEnvironmentChange();
+              onEnvironmentChanged();
+            }}
           />
           {status.environment === "sandbox" ? (
-            <span className="text-xs text-amber-700 dark:text-amber-300">Test data</span>
+            <span className="text-xs text-amber-700 dark:text-amber-300">Showing test data only</span>
           ) : null}
           {!status.configured ? (
             <button className="text-xs text-brand-700 hover:underline dark:text-brand-500" onClick={onOpenSettings}>

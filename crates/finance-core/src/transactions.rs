@@ -10,6 +10,7 @@ use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
+use crate::accounts::Scope;
 use crate::error::{CoreError, Result};
 use crate::util::{normalize_payee, now_rfc3339, optional_text, parse_date, required_text};
 
@@ -49,6 +50,9 @@ pub struct TransactionFilter {
     pub from: Option<String>,
     pub to: Option<String>,
     pub search: Option<String>,
+    /// Which data set to cover; the app fills this in from the active Plaid
+    /// environment when the UI doesn't ask for something specific.
+    pub scope: Option<Scope>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -200,7 +204,7 @@ pub fn set_category(conn: &mut Connection, ids: &[i64], category_id: Option<i64>
 }
 
 fn where_clause(f: &TransactionFilter) -> Result<(String, Vec<Value>)> {
-    let mut clauses = vec!["1 = 1".to_string()];
+    let mut clauses = vec![f.scope.unwrap_or_default().sql().to_string()];
     let mut args: Vec<Value> = Vec::new();
     if let Some(a) = f.account_id {
         args.push(a.into());
@@ -244,7 +248,7 @@ pub fn query(conn: &Connection, f: &TransactionFilter) -> Result<TransactionPage
             "SELECT count(*),
                     coalesce(sum(CASE WHEN t.amount_cents > 0 THEN t.amount_cents END), 0),
                     coalesce(sum(CASE WHEN t.amount_cents < 0 THEN t.amount_cents END), 0)
-             FROM transactions t WHERE {clause}"
+             FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE {clause}"
         ),
         params_from_iter(args.iter()),
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
@@ -261,10 +265,11 @@ pub fn query(conn: &Connection, f: &TransactionFilter) -> Result<TransactionPage
 
 /// Income and spending between two dates (inclusive), excluding transfers
 /// and liabilities' payments categorized as transfers.
-pub fn summary(conn: &Connection, from: &str, to: &str) -> Result<PeriodSummary> {
+pub fn summary(conn: &Connection, from: &str, to: &str, scope: Scope) -> Result<PeriodSummary> {
     let from = parse_date(from)?;
     let to = parse_date(to)?;
     Ok(conn.query_row(
+        &format!(
         "SELECT
             coalesce(sum(CASE WHEN t.amount_cents > 0 AND coalesce(c.kind,'') = 'income'
                               THEN t.amount_cents END), 0),
@@ -273,15 +278,20 @@ pub fn summary(conn: &Connection, from: &str, to: &str) -> Result<PeriodSummary>
                               WHEN t.amount_cents > 0 AND c.kind = 'expense'
                               THEN -t.amount_cents END), 0),
             count(*)
-         FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
-         WHERE t.posted_on BETWEEN ?1 AND ?2",
+         FROM transactions t
+         JOIN accounts a ON a.id = t.account_id
+         LEFT JOIN categories c ON c.id = t.category_id
+         WHERE t.posted_on BETWEEN ?1 AND ?2 AND {}",
+            scope.sql()
+        ),
         params![from, to],
         |r| Ok(PeriodSummary { income_cents: r.get(0)?, spending_cents: r.get(1)?, transaction_count: r.get(2)? }),
     )?)
 }
 
 /// Normalised payee -> the category most recently used for it, built from
-/// the latest 10,000 categorized transactions.
+/// the latest 10,000 categorized transactions (test accounts included, so a
+/// Sandbox run still learns nothing harmful).
 pub fn payee_category_map(conn: &Connection) -> Result<HashMap<String, i64>> {
     let mut stmt = conn.prepare_cached(
         "SELECT payee, category_id FROM transactions
@@ -433,7 +443,7 @@ pub(crate) mod tests {
         create(&c, &xfer).unwrap();
         create(&c, &tx(a.id, "2026-10-01", -999, "Next month")).unwrap();
 
-        let s = summary(&c, "2026-09-01", "2026-09-30").unwrap();
+        let s = summary(&c, "2026-09-01", "2026-09-30", Scope::Real).unwrap();
         assert_eq!(s.income_cents, 400000);
         assert_eq!(s.spending_cents, 10000 - 2000); // refund offsets spending; transfer excluded
         assert_eq!(s.transaction_count, 4);

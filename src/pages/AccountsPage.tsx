@@ -22,9 +22,13 @@ export function AccountsPage({
   const [showArchived, setShowArchived] = useState(false);
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<number>();
-  const accounts = useAsync(() => api.listAccounts(true), []);
-  const nw = useAsync(() => api.netWorth(), [accounts.data]);
   const plaid = useAsync(() => api.plaidStatus(), []);
+  const sandbox = plaid.data?.environment === "sandbox";
+  // The backend scopes this to the active environment: test accounts in
+  // Sandbox, real accounts in Production.
+  const accounts = useAsync(() => api.listAccounts(true), [plaid.data?.environment]);
+  const nw = useAsync(() => api.netWorth(), [accounts.data]);
+
   const items = useAsync(() => api.plaidListItems(), []);
   const reloadAll = useCallback(() => {
     accounts.reload();
@@ -95,10 +99,11 @@ export function AccountsPage({
 
       {accounts.data && list.length === 0 ? (
         <Card>
-          <p className="font-medium">No accounts yet</p>
+          <p className="font-medium">{sandbox ? "No test accounts yet" : "No accounts yet"}</p>
           <p className="mt-1 text-sm text-zinc-500">
-            Connect a bank above to add accounts automatically, or add your HYSA, checking, brokerage, 401(k), Roth IRA,
-            cards and loans by hand.
+            {sandbox
+              ? "Sandbox is empty. Connect a test bank above to try syncing; your real accounts are waiting in Production."
+              : "Connect a bank above to add accounts automatically, or add your HYSA, checking, brokerage, 401(k), Roth IRA, cards and loans by hand."}
           </p>
           <Button className="mt-4" onClick={() => setAdding(true)}>
             Add your first account
@@ -156,6 +161,7 @@ function AccountCard({ account: a, onOpen }: { account: Account; onOpen: () => v
                 SYNCED
               </span>
             ) : null}
+
           </p>
           <p className="text-xs text-zinc-500">
             {KIND_LABELS[a.kind]}
@@ -177,7 +183,7 @@ function AccountCard({ account: a, onOpen }: { account: Account; onOpen: () => v
 function AccountDetail({ id, onBack, onChanged }: { id: number; onBack: () => void; onChanged: () => void }) {
   const account = useAsync(() => api.getAccount(id), [id]);
   const history = useAsync(() => api.balanceHistory(id), [id]);
-  const all = useAsync(() => api.listAccounts(true), [id]);
+  const all = useAsync(() => api.listAccounts(true, "all"), [id]);
   const categories = useAsync(() => api.listCategories(), []);
   const holdings = useAsync(() => api.listHoldings(id), [id]);
   const [editing, setEditing] = useState(false);

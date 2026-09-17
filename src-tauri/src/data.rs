@@ -4,7 +4,9 @@
 
 use std::collections::HashMap;
 
-use finance_core::accounts::{self, Account, AccountInput, BalanceSnapshot, NetWorth};
+use finance_core::accounts::{self, Account, AccountInput, BalanceSnapshot, NetWorth, Scope, TestDataSummary};
+use finance_core::plaid::api::Environment;
+use finance_core::plaid::config;
 use finance_core::categories::{self, Category, CategoryInput};
 use finance_core::import::{self, CsvMapping, Detection, ImportProfile, ImportResult, Preview};
 use finance_core::transactions::{
@@ -15,11 +17,43 @@ use tauri::{AppHandle, State};
 use crate::commands::{blocking, CmdResult};
 use crate::state::AppState;
 
+/// What the app shows right now: Sandbox is a self-contained test world, so
+/// while it is active every list and total covers test data only; otherwise
+/// they cover real data only.
+fn active_scope(state: &AppState) -> finance_core::Result<Scope> {
+    let env = state.with_session_passive(|s| config::active_environment(s.conn()))?;
+    Ok(match env {
+        Environment::Sandbox => Scope::Test,
+        Environment::Production => Scope::Real,
+    })
+}
+
 // ---------------------------------------------------------------- accounts
 
 #[tauri::command]
-pub fn list_accounts(state: State<'_, AppState>, include_archived: bool) -> CmdResult<Vec<Account>> {
-    Ok(state.with_session(|s| accounts::list(s.conn(), include_archived))?)
+pub fn list_accounts(
+    state: State<'_, AppState>,
+    include_archived: bool,
+    scope: Option<Scope>,
+) -> CmdResult<Vec<Account>> {
+    let scope = match scope {
+        Some(s) => s,
+        None => active_scope(&state)?,
+    };
+    Ok(state.with_session(|s| accounts::list(s.conn(), include_archived, scope))?)
+}
+
+/// How much Sandbox test data is in the vault.
+#[tauri::command]
+pub fn test_data_summary(state: State<'_, AppState>) -> CmdResult<TestDataSummary> {
+    Ok(state.with_session(|s| accounts::test_data_summary(s.conn()))?)
+}
+
+/// Delete every account created by a Sandbox connection, with its
+/// transactions and balances. Real accounts are never touched.
+#[tauri::command]
+pub fn delete_test_data(state: State<'_, AppState>) -> CmdResult<TestDataSummary> {
+    Ok(state.with_session(|s| accounts::delete_test_data(s.conn_mut()))?)
 }
 
 #[tauri::command]
@@ -69,7 +103,8 @@ pub fn balance_history(state: State<'_, AppState>, account_id: i64) -> CmdResult
 
 #[tauri::command]
 pub fn net_worth(state: State<'_, AppState>) -> CmdResult<NetWorth> {
-    Ok(state.with_session(|s| accounts::net_worth(s.conn()))?)
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| accounts::net_worth(s.conn(), scope))?)
 }
 
 // -------------------------------------------------------------- categories
@@ -97,7 +132,13 @@ pub fn delete_category(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
 // ------------------------------------------------------------ transactions
 
 #[tauri::command]
-pub fn query_transactions(state: State<'_, AppState>, filter: TransactionFilter) -> CmdResult<TransactionPage> {
+pub fn query_transactions(
+    state: State<'_, AppState>,
+    mut filter: TransactionFilter,
+) -> CmdResult<TransactionPage> {
+    if filter.scope.is_none() {
+        filter.scope = Some(active_scope(&state)?);
+    }
     Ok(state.with_session(|s| transactions::query(s.conn(), &filter))?)
 }
 
@@ -136,7 +177,8 @@ pub fn suggest_category(state: State<'_, AppState>, payee: String) -> CmdResult<
 
 #[tauri::command]
 pub fn period_summary(state: State<'_, AppState>, from: String, to: String) -> CmdResult<PeriodSummary> {
-    Ok(state.with_session(|s| transactions::summary(s.conn(), &from, &to))?)
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| transactions::summary(s.conn(), &from, &to, scope))?)
 }
 
 // ------------------------------------------------------------------ import

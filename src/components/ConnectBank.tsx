@@ -46,7 +46,11 @@ export function ConnectBank({
       const start = await api.plaidStartLink(kind);
       setStep({ s: "waiting", start });
     } catch (e) {
-      setError(errorMessage(e));
+      setError(
+        isApiError(e) && e.code === "password_required"
+          ? "Your confirmation expired. Switch to Production again to re-enter your password."
+          : errorMessage(e),
+      );
     } finally {
       setBusy(false);
     }
@@ -133,6 +137,12 @@ export function ConnectBank({
             Plaid opens in your web browser. You sign in to your bank there; your bank password never passes through this
             app. When you're done, come back here.
           </p>
+          {environment === "production" ? (
+            <p className="rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-800">
+              <span className="font-medium">This connects a real bank.</span> It uses one of the 10 institutions included
+              in Plaid's free Trial plan, and disconnecting later doesn't give the slot back.
+            </p>
+          ) : null}
           <div className="grid grid-cols-2 gap-3">
             <ChoiceCard
               title="Bank or credit card"

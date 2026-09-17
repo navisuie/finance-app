@@ -51,6 +51,8 @@ export function TransactionList({
       from: from || undefined,
       to: to || undefined,
       search: debounced || undefined,
+      // An account's own page always shows its transactions, test or not.
+      scope: fixedAccountId !== undefined ? "all" : undefined,
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
     }),

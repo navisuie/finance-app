@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useAsync } from "../hooks/useAsync";
+import { announceEnvironmentChange } from "../hooks/usePlaidStatus";
 import { api, errorMessage } from "../lib/api";
 import type { PlaidEnvironment } from "../lib/types";
 import { useConfirm } from "./Confirm";
-import { Segmented } from "./Segmented";
+import { EnvironmentSwitch } from "./EnvironmentSwitch";
 import { Button, Card, Field, PasswordField } from "./ui";
 
 const LABELS: Record<PlaidEnvironment, string> = {
@@ -63,29 +64,18 @@ export function PlaidSettings() {
     }
   };
 
-  const switchTo = async (env: PlaidEnvironment) => {
-    try {
-      await api.plaidSetEnvironment(env);
-      status.reload();
-    } catch (err) {
-      setMsg({ ok: false, text: errorMessage(err) });
-    }
-  };
-
   return (
     <Card title="Bank connections (Plaid)">
       {s ? (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-sm text-zinc-600 dark:text-zinc-400">Using</span>
-            <Segmented
-              label="Plaid environment"
-              value={s.environment}
-              onChange={switchTo}
-              options={[
-                { value: "sandbox", label: "Sandbox" },
-                { value: "production", label: "Production" },
-              ]}
+            <EnvironmentSwitch
+              environment={s.environment}
+              onChanged={() => {
+                announceEnvironmentChange();
+                status.reload();
+              }}
             />
             <span className="text-xs text-zinc-500">You can also switch this from the Accounts page.</span>
           </div>
@@ -167,9 +157,54 @@ export function PlaidSettings() {
         </form>
       ) : null}
 
+      <TestData />
+
       {msg ? <p className={`mt-3 text-sm ${msg.ok ? "text-brand-700 dark:text-brand-500" : "text-red-600"}`}>{msg.text}</p> : null}
       {status.error ? <p className="mt-3 text-sm text-red-600">{status.error}</p> : null}
       {dialog}
     </Card>
+  );
+}
+
+/** Remove everything a Sandbox connection created. */
+function TestData() {
+  const summary = useAsync(() => api.testDataSummary(), []);
+  const [msg, setMsg] = useState<string>();
+  const [confirm, dialog] = useConfirm();
+  const s = summary.data;
+  if (!s || s.accounts === 0) return dialog;
+
+  const remove = async () => {
+    const ok = await confirm({
+      title: "Delete all test data?",
+      body: `This removes ${s.accounts} test account(s) and ${s.transactions} test transaction(s) created by Sandbox connections. Your real accounts are not touched.`,
+      confirmLabel: "Delete test data",
+    });
+    if (!ok) return;
+    try {
+      const removed = await api.deleteTestData();
+      setMsg(`Deleted ${removed.accounts} test account(s).`);
+      summary.reload();
+      announceEnvironmentChange();
+    } catch (e) {
+      setMsg(errorMessage(e));
+    }
+  };
+
+  return (
+    <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+      <div className="min-w-0 flex-1 text-sm">
+        <p className="font-medium">Test data</p>
+        <p className="text-xs text-zinc-500">
+          {s.accounts} account{s.accounts === 1 ? "" : "s"} and {s.transactions} transaction
+          {s.transactions === 1 ? "" : "s"} from Sandbox connections. They only show while Sandbox is active.
+        </p>
+        {msg ? <p className="text-xs text-zinc-500">{msg}</p> : null}
+      </div>
+      <Button variant="secondary" className="py-1" onClick={remove}>
+        Delete test data
+      </Button>
+      {dialog}
+    </div>
   );
 }

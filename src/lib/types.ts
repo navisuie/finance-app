@@ -23,6 +23,8 @@ export interface Account {
   isAsset: boolean;
   archived: boolean;
   linked: boolean;
+  /** Created by a Plaid Sandbox connection: test data. */
+  isTest: boolean;
   balanceCents: number | null;
   balanceAsOf: string | null;
   transactionCount: number;
@@ -91,6 +93,8 @@ export interface TransactionFilter {
   from?: string;
   to?: string;
   search?: string;
+  /** Defaults to the active environment's data (test in Sandbox, real in Production). */
+  scope?: Scope;
   limit?: number;
   offset?: number;
 }
@@ -175,6 +179,14 @@ export interface CategoryInput {
 // ---- Plaid
 
 export type PlaidEnvironment = "sandbox" | "production";
+
+/** Which set of data a query covers. */
+export type Scope = "real" | "test" | "all";
+
+export interface TestDataSummary {
+  accounts: number;
+  transactions: number;
+}
 
 export interface EnvironmentStatus {
   environment: PlaidEnvironment;

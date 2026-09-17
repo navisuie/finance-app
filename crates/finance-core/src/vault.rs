@@ -134,6 +134,15 @@ impl Session {
         &mut self.conn
     }
 
+    /// Check the master password without changing anything. Used to confirm
+    /// actions that deserve a second thought, such as switching to live bank
+    /// data.
+    pub fn verify_password(&self, password: &str) -> Result<()> {
+        let meta = read_meta(&self.dir)?;
+        crypto::open_slot(password.as_bytes(), &meta.password_slot)?;
+        Ok(())
+    }
+
     /// Re-wrap the data key under a new password. The database itself is not
     /// re-encrypted, so this is instant regardless of data size.
     pub fn change_password(&self, old: &str, new: &str) -> Result<()> {
@@ -334,6 +343,16 @@ mod tests {
             let mode = fs::metadata(dir.path().join(f)).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "{f}");
         }
+    }
+
+    #[test]
+    fn verify_password_checks_without_changing_anything() {
+        let (dir, opened) = new_vault();
+        opened.session.verify_password(PW).unwrap();
+        assert!(matches!(opened.session.verify_password(PW2), Err(CoreError::WrongPassword)));
+        drop(opened);
+        // Still unlockable with the original password.
+        Vault::unlock(dir.path(), PW).unwrap();
     }
 
     #[test]

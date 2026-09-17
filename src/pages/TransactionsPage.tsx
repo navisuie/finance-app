@@ -6,7 +6,8 @@ import { useAsync } from "../hooks/useAsync";
 import { api } from "../lib/api";
 
 export function TransactionsPage() {
-  const accounts = useAsync(() => api.listAccounts(true), []);
+  const plaid = useAsync(() => api.plaidStatus(), []);
+  const accounts = useAsync(() => api.listAccounts(true), [plaid.data?.environment]);
   const categories = useAsync(() => api.listCategories(), []);
   const [importOpen, setImportOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -21,7 +22,11 @@ export function TransactionsPage() {
       </div>
       {accounts.error || categories.error ? <p className="text-sm text-red-600">{accounts.error ?? categories.error}</p> : null}
       {accounts.data && accounts.data.length === 0 ? (
-        <p className="text-sm text-zinc-500">Add an account on the Accounts page to start recording transactions.</p>
+        <p className="text-sm text-zinc-500">
+          {plaid.data?.environment === "sandbox"
+            ? "No test accounts yet. Connect a test bank on the Accounts page, or switch to Production for your real transactions."
+            : "Add an account on the Accounts page to start recording transactions."}
+        </p>
       ) : null}
       {accounts.data && categories.data ? (
         <TransactionList

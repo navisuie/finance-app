@@ -7,6 +7,9 @@ import { Placeholder } from "./Placeholder";
 import { AccountsPage } from "./AccountsPage";
 import { TransactionsPage } from "./TransactionsPage";
 import { PrivacyContext } from "../components/privacy";
+import { EnvironmentSwitch } from "../components/EnvironmentSwitch";
+import { announceEnvironmentChange, usePlaidStatus } from "../hooks/usePlaidStatus";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Section = "dashboard" | "accounts" | "transactions" | "budgets" | "goals" | "calculators" | "settings";
 
@@ -32,6 +35,21 @@ export function AppShell({ onLock }: { onLock: () => void }) {
   const [section, setSection] = useState<Section>("dashboard");
   const [hideBalances, setHideBalances] = useState(false);
   const [syncNote, setSyncNote] = useState<string>();
+  const { status: plaid, reload: reloadPlaid } = usePlaidStatus();
+  const sandbox = plaid?.environment === "sandbox";
+
+  // The window title says which data you're looking at, even when the app is
+  // behind another window.
+  useEffect(() => {
+    if (!plaid) return;
+    try {
+      getCurrentWindow()
+        .setTitle(sandbox ? "Finance — SANDBOX (test data)" : "Finance")
+        .catch(() => {});
+    } catch {
+      // Not running inside the app window (e.g. a browser preview).
+    }
+  }, [plaid, sandbox]);
   const [dataVersion, setDataVersion] = useState(0);
 
   // After unlocking, refresh bank data in the background if it's older than 6 hours.
@@ -76,6 +94,18 @@ export function AppShell({ onLock }: { onLock: () => void }) {
         <div className="mb-6 flex items-center gap-2 px-2">
           <Logo size={28} />
           <span className="font-semibold">Finance</span>
+          {plaid ? (
+            <span
+              className={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                sandbox
+                  ? "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                  : "bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-500"
+              }`}
+              title={sandbox ? "Plaid Sandbox: test banks and fake data" : "Plaid Production: your real banks"}
+            >
+              {sandbox ? "SANDBOX" : "LIVE"}
+            </span>
+          ) : null}
         </div>
         <nav className="flex-1 space-y-1">
           {NAV.map((n) => (
@@ -109,16 +139,49 @@ export function AppShell({ onLock }: { onLock: () => void }) {
           </Button>
         </div>
       </aside>
-      <main className="flex-1 overflow-y-auto p-8">
-        <PrivacyContext.Provider value={hideBalances}>
-        {section === "dashboard" && <Dashboard key={dataVersion} onNavigate={setSection} />}
-        {section === "settings" && <SettingsPage />}
-        {section === "accounts" && <AccountsPage key={dataVersion} onOpenSettings={() => setSection("settings")} />}
-        {section === "transactions" && <TransactionsPage />}
-        {section === "budgets" && <Placeholder title="Budgets" phase={3} detail="Monthly limits per category with progress bars." />}
-        {section === "goals" && <Placeholder title="Goals" phase={3} detail="Savings targets like a house down payment or emergency fund." />}
-        {section === "calculators" && <Placeholder title="Calculators" phase={4} detail="Retirement, Monte Carlo, savings goal, home affordability, rent vs buy, and debt payoff." />}
-        </PrivacyContext.Provider>
+      <main className="flex-1 overflow-y-auto">
+        {sandbox && plaid ? (
+          <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-amber-200 bg-amber-100 px-8 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+            <span className="font-medium">Sandbox mode</span>
+            <span className="text-xs">
+              You're looking at test data only. Your real accounts, balances and totals come back in Production.
+            </span>
+            <span className="ml-auto flex items-center gap-2">
+              <EnvironmentSwitch
+                environment={plaid.environment}
+                size="small"
+                onChanged={() => {
+                  announceEnvironmentChange();
+                  reloadPlaid();
+                  setDataVersion((v) => v + 1);
+                }}
+              />
+            </span>
+          </div>
+        ) : null}
+        <div className="p-8">
+          <PrivacyContext.Provider value={hideBalances}>
+            {section === "dashboard" && <Dashboard key={dataVersion} onNavigate={setSection} />}
+            {section === "settings" && <SettingsPage />}
+            {section === "accounts" && (
+              <AccountsPage key={dataVersion} onOpenSettings={() => setSection("settings")} />
+            )}
+            {section === "transactions" && <TransactionsPage key={dataVersion} />}
+            {section === "budgets" && (
+              <Placeholder title="Budgets" phase={3} detail="Monthly limits per category with progress bars." />
+            )}
+            {section === "goals" && (
+              <Placeholder title="Goals" phase={3} detail="Savings targets like a house down payment or emergency fund." />
+            )}
+            {section === "calculators" && (
+              <Placeholder
+                title="Calculators"
+                phase={4}
+                detail="Retirement, Monte Carlo, savings goal, home affordability, rent vs buy, and debt payoff."
+              />
+            )}
+          </PrivacyContext.Provider>
+        </div>
       </main>
     </div>
   );

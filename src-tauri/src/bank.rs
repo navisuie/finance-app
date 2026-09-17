@@ -8,7 +8,7 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use finance_core::plaid::api::{validate_link_url, PlaidApi};
+use finance_core::plaid::api::{validate_link_url, Environment, PlaidApi};
 use finance_core::plaid::config::{self, PlaidStatus};
 use finance_core::plaid::service::{self, LinkMode, LinkPoll, LinkStart, SyncResult};
 use finance_core::plaid::store::{self, AccountChoice, HoldingView, ItemView, LinkSummary, PlaidAccountView};
@@ -92,16 +92,42 @@ pub fn plaid_clear_credentials(
     })?)
 }
 
-/// Switch between Sandbox and Production. Keys for both are kept, so this is
-/// instant and needs no network call.
+/// Switch between Sandbox and Production. Keys for both are kept, so no
+/// network call is needed. Entering Production asks for the master password
+/// (once every 10 minutes): live bank data shouldn't be one stray click away.
 #[tauri::command]
-pub fn plaid_set_environment(state: State<'_, AppState>, environment: String) -> CmdResult<PlaidStatus> {
-    let env = config::parse_environment(&environment).map_err(CmdError::from)?;
-    // Any half-finished Link session belongs to the old environment.
-    if let Ok(mut pending) = state.pending_links.lock() {
-        pending.clear();
+pub async fn plaid_set_environment(
+    app: AppHandle,
+    environment: String,
+    password: Option<String>,
+) -> CmdResult<PlaidStatus> {
+    let password = password.map(Zeroizing::new);
+    blocking(app, move |state| {
+        state.touch()?;
+        let env = config::parse_environment(&environment)?;
+        if env == Environment::Production && !state.production_confirmed() {
+            match password {
+                Some(pw) => state.confirm_production(&pw)?,
+                None => return Err(CoreError::PasswordRequired),
+            }
+        }
+        // Any half-finished Link session belongs to the old environment.
+        if let Ok(mut pending) = state.pending_links.lock() {
+            pending.clear();
+        }
+        state.with_session_passive(|s| config::set_active_environment(s.conn(), env))
+    })
+    .await
+}
+
+/// Production actions (connecting or reconnecting a bank) need a recent
+/// password confirmation too.
+fn guard_production(state: &AppState) -> Result<()> {
+    let env = state.with_session_passive(|s| config::active_environment(s.conn()))?;
+    if env == Environment::Production {
+        state.require_production_confirmed()?;
     }
-    Ok(state.with_session(|s| config::set_active_environment(s.conn(), env))?)
+    Ok(())
 }
 
 #[tauri::command]
@@ -111,6 +137,7 @@ pub fn plaid_list_items(state: State<'_, AppState>) -> CmdResult<Vec<ItemView>> 
 
 fn begin(state: &AppState, mode: LinkMode) -> Result<LinkStart> {
     state.touch()?;
+    guard_production(state)?;
     let api = client(state)?;
     let start = service::start_link(&api, state, &mode)?;
     {
@@ -217,6 +244,7 @@ pub async fn plaid_link_accounts(
 ) -> CmdResult<LinkAccountsOut> {
     blocking(app, move |state| {
         state.touch()?;
+        guard_production(state)?;
         let api = client(state)?;
         let (summary, sync) = service::link_accounts(&api, state, item_id, &choices)?;
         Ok(LinkAccountsOut { summary, sync })

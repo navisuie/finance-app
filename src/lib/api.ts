@@ -26,6 +26,8 @@ import type {
   PlaidStatus,
   SyncOutcome,
   SyncResult,
+  Scope,
+  TestDataSummary,
 } from "./types";
 
 /** Error shape returned by every Rust command. */
@@ -44,7 +46,8 @@ export interface ApiError {
     | "db"
     | "io"
     | "json"
-    | "plaid";
+    | "plaid"
+    | "password_required";
   message: string;
   retry_after_secs?: number;
   /** Plaid's error code when code === "plaid" */
@@ -85,7 +88,11 @@ export const api = {
     invoke<void>("change_password", { currentPassword, newPassword }),
 
   // Accounts
-  listAccounts: (includeArchived = false) => invoke<Account[]>("list_accounts", { includeArchived }),
+  /** `scope` defaults to the active environment's data. */
+  listAccounts: (includeArchived = false, scope?: Scope) =>
+    invoke<Account[]>("list_accounts", { includeArchived, scope: scope ?? null }),
+  testDataSummary: () => invoke<TestDataSummary>("test_data_summary"),
+  deleteTestData: () => invoke<TestDataSummary>("delete_test_data"),
   getAccount: (id: number) => invoke<Account>("get_account", { id }),
   createAccount: (input: AccountInput) => invoke<Account>("create_account", { input }),
   updateAccount: (id: number, input: AccountInput) => invoke<Account>("update_account", { id, input }),
@@ -137,7 +144,9 @@ export const api = {
     invoke<PlaidStatus>("plaid_save_credentials", { environment, clientId, secret }),
   plaidClearCredentials: (environment?: string) =>
     invoke<PlaidStatus>("plaid_clear_credentials", { environment: environment ?? null }),
-  plaidSetEnvironment: (environment: string) => invoke<PlaidStatus>("plaid_set_environment", { environment }),
+  /** Switching to Production needs the master password once every 10 minutes. */
+  plaidSetEnvironment: (environment: string, password?: string) =>
+    invoke<PlaidStatus>("plaid_set_environment", { environment, password: password ?? null }),
   plaidListItems: () => invoke<PlaidItem[]>("plaid_list_items"),
   plaidStartLink: (kind: "banking" | "investments") => invoke<LinkStart>("plaid_start_link", { kind }),
   plaidStartReconnect: (itemId: number) => invoke<LinkStart>("plaid_start_reconnect", { itemId }),

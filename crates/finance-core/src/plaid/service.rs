@@ -332,7 +332,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::accounts::{self, tests::input};
+    use crate::accounts::{self, tests::input, Scope};
     use crate::plaid::api::*;
     use crate::plaid::store::LinkAction;
     use crate::transactions::{self, TransactionFilter};
@@ -343,6 +343,11 @@ mod tests {
         fn with_conn<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
             f(&mut self.0.borrow_mut())
         }
+    }
+
+    /// Sandbox data is test data, so these tests look at the test scope.
+    fn tx_filter() -> TransactionFilter {
+        TransactionFilter { scope: Some(Scope::Test), ..Default::default() }
     }
 
     fn vault() -> TestVault {
@@ -594,13 +599,13 @@ mod tests {
         assert_eq!(*m.cursors_seen.borrow(), vec![None, Some("c1".to_string())]);
 
         v.with_conn(|c| {
-            let accts = accounts::list(c, false)?;
+            let accts = accounts::list(c, false, Scope::Test)?;
             let cc = accts.iter().find(|a| a.kind == "credit_card").unwrap();
             assert!(!cc.is_asset && cc.linked);
             assert_eq!(cc.balance_cents, Some(41025));
             assert_eq!(cc.last4.as_deref(), Some("3333"));
             assert_eq!(cc.institution.as_deref(), Some("First Platypus Bank"));
-            let page = transactions::query(c, &TransactionFilter::default())?;
+            let page = transactions::query(c, &tx_filter())?;
             let wf = page.items.iter().find(|t| t.payee == "Whole Foods").unwrap();
             assert_eq!(wf.amount_cents, -8999);
             assert_eq!(wf.category_name.as_deref(), Some("Groceries"));
@@ -608,8 +613,18 @@ mod tests {
             let pay = page.items.iter().find(|t| t.payee == "Acme Payroll").unwrap();
             assert_eq!(pay.amount_cents, 250000);
             assert_eq!(pay.category_name.as_deref(), Some("Income"));
-            let nw = accounts::net_worth(c)?;
-            assert_eq!(nw.net_cents, 11000 + 2363198 - 41025);
+            assert!(accts.iter().all(|a| a.is_test), "Sandbox accounts are marked as test data");
+            assert_eq!(accounts::net_worth(c, Scope::Real)?.net_cents, 0, "test balances stay out of real net worth");
+            assert_eq!(
+                accounts::net_worth(c, Scope::Test)?.net_cents,
+                11000 + 2363198 - 41025,
+                "Sandbox keeps its own totals"
+            );
+            assert_eq!(
+                transactions::query(c, &TransactionFilter::default())?.total,
+                0,
+                "test transactions are hidden by default"
+            );
             Ok(())
         })
         .unwrap();
@@ -617,7 +632,7 @@ mod tests {
         // Second sync: continues from the saved cursor; modify keeps the
         // user's category; remove deletes.
         v.with_conn(|c| {
-            let page = transactions::query(c, &TransactionFilter::default())?;
+            let page = transactions::query(c, &tx_filter())?;
             let t1 = page.items.iter().find(|t| t.payee == "Starbucks").unwrap();
             let shopping = crate::categories::find_by_name(c, "Shopping")?.unwrap();
             transactions::set_category(c, &[t1.id], Some(shopping))?;
@@ -631,7 +646,7 @@ mod tests {
         assert_eq!((s2.transactions.modified, s2.transactions.removed), (1, 1));
         assert_eq!(m.cursors_seen.borrow().last().unwrap().as_deref(), Some("c2"));
         v.with_conn(|c| {
-            let page = transactions::query(c, &TransactionFilter::default())?;
+            let page = transactions::query(c, &tx_filter())?;
             assert_eq!(page.total, 2);
             let t1 = page.items.iter().find(|t| t.payee == "Starbucks Coffee").unwrap();
             assert_eq!(t1.amount_cents, -600);
@@ -651,7 +666,7 @@ mod tests {
         m.pages.borrow_mut().push_back(Ok(page(vec![pending], vec![], vec![], "c1", false)));
         create_all(item, &m, &v);
         v.with_conn(|c| {
-            let page = transactions::query(c, &TransactionFilter::default())?;
+            let page = transactions::query(c, &tx_filter())?;
             let dining = crate::categories::find_by_name(c, "Dining")?.unwrap();
             transactions::set_category(c, &[page.items[0].id], Some(dining))?;
             Ok(())
@@ -663,7 +678,7 @@ mod tests {
         m.pages.borrow_mut().push_back(Ok(page(vec![posted, other], vec![], vec!["p1"], "c2", false)));
         sync_item(&m, &v, item).unwrap();
         v.with_conn(|c| {
-            let page = transactions::query(c, &TransactionFilter::default())?;
+            let page = transactions::query(c, &tx_filter())?;
             assert_eq!(page.total, 2);
             assert!(page.items.iter().all(|t| t.category_name.as_deref() == Some("Dining")));
             assert!(page.items.iter().all(|t| !t.pending));
@@ -676,13 +691,17 @@ mod tests {
     fn linking_existing_account_respects_sync_from() {
         let m = connected_mock();
         let v = vault();
-        let existing = v
+        // A test account from an earlier Sandbox run, plus a real account that
+        // a Sandbox connection must never touch.
+        let (existing, real) = v
             .with_conn(|c| {
                 let mut i = input("My Checking", "checking");
                 i.last4 = Some("0000".into());
                 let a = accounts::create(c, &i)?;
+                accounts::set_is_test(c, a.id, true)?;
                 transactions::create(c, &transactions::tests::tx(a.id, "2026-08-31", -100, "Old manual"))?;
-                Ok(a.id)
+                let real = accounts::create(c, &input("Real money", "checking"))?;
+                Ok((a.id, real.id))
             })
             .unwrap();
         let item = connect(&m, &v, &["transactions"]);
@@ -717,11 +736,23 @@ mod tests {
         assert_eq!(sync.transactions.added, 1);
         assert_eq!(sync.transactions.skipped, 1);
         v.with_conn(|c| {
-            assert_eq!(accounts::list(c, false)?.len(), 1);
-            assert_eq!(transactions::query(c, &TransactionFilter::default())?.total, 2);
+            assert_eq!(accounts::list(c, false, Scope::Test)?.len(), 1, "no new test account was created");
+            assert_eq!(transactions::query(c, &tx_filter())?.total, 2);
             Ok(())
         })
         .unwrap();
+
+        // A Sandbox connection can't be linked to an account holding real data.
+        let to_real = vec![AccountChoice {
+            plaid_account_id: "pa-cc".into(),
+            action: LinkAction::Link,
+            account_id: Some(real),
+            kind: None,
+            name: None,
+            sync_from: None,
+        }];
+        let err = link_accounts(&m, &v, item, &to_real).unwrap_err().to_string();
+        assert!(err.contains("real data"), "{err}");
 
         // Two Plaid accounts can't target the same local account.
         let dup = vec![
@@ -748,7 +779,11 @@ mod tests {
         link_accounts(&m, &v, item, &later).unwrap();
         assert_eq!(m.cursors_seen.borrow().last().unwrap(), &None);
         v.with_conn(|c| {
-            assert_eq!(transactions::query(c, &TransactionFilter::default())?.total, 3);
+            assert!(
+                accounts::list(c, false, Scope::Test)?.iter().find(|a| a.name == "Card").unwrap().is_test,
+                "an account created by a Sandbox connection is test data"
+            );
+            assert_eq!(transactions::query(c, &tx_filter())?.total, 3);
             Ok(())
         })
         .unwrap();
@@ -794,7 +829,7 @@ mod tests {
         ]);
         assert!(sync_item(&m, &v, item).is_err());
         v.with_conn(|c| {
-            assert_eq!(transactions::query(c, &TransactionFilter::default())?.total, 0);
+            assert_eq!(transactions::query(c, &tx_filter())?.total, 0);
             Ok(())
         })
         .unwrap();
@@ -829,7 +864,7 @@ mod tests {
         assert!(m.cursors_seen.borrow().is_empty(), "investments-only items don't call transactions/sync");
         let holdings = v
             .with_conn(|c| {
-                let a = accounts::list(c, false)?.into_iter().find(|a| a.kind == "401k").unwrap();
+                let a = accounts::list(c, false, Scope::Test)?.into_iter().find(|a| a.kind == "401k").unwrap();
                 store::list_holdings(c, a.id)
             })
             .unwrap();
@@ -859,7 +894,7 @@ mod tests {
         assert_eq!(*m.removed.borrow(), vec!["access-sandbox-xyz".to_string()]);
         v.with_conn(|c| {
             assert!(store::list_items(c)?.is_empty());
-            let accts = accounts::list(c, false)?;
+            let accts = accounts::list(c, false, Scope::Test)?;
             assert_eq!(accts.len(), 3, "accounts and history are kept");
             assert!(accts.iter().all(|a| !a.linked));
             Ok(())

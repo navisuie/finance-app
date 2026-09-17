@@ -208,9 +208,22 @@ fn day_after_latest_transaction(conn: &Connection, account_id: i64) -> Result<Op
         .map(|d| d.format("%Y-%m-%d").to_string()))
 }
 
+/// True when this item was created with Sandbox keys, so everything it
+/// brings in is test data.
+pub fn item_is_test(conn: &Connection, item_db_id: i64) -> Result<bool> {
+    let token = item_secret(conn, item_db_id)?.access_token;
+    Ok(Environment::from_access_token(&token) == Some(Environment::Sandbox))
+}
+
 pub fn account_views(conn: &Connection, item_db_id: i64, plaid: &[PlaidAccount]) -> Result<Vec<PlaidAccountView>> {
     let linked = linked_accounts(conn, item_db_id)?;
-    let locals = accounts::list(conn, false)?;
+    let is_test = item_is_test(conn, item_db_id)?;
+    // Only offer to link accounts of the same kind of data: test connections
+    // to test accounts, real connections to real accounts.
+    let locals: Vec<accounts::Account> = accounts::list(conn, false, accounts::Scope::All)?
+        .into_iter()
+        .filter(|a| a.is_test == is_test)
+        .collect();
     let mut out = Vec::new();
     let mut claimed: HashSet<i64> = HashSet::new();
     for p in plaid {
@@ -271,6 +284,7 @@ pub fn apply_account_choices(
     choices: &[AccountChoice],
 ) -> Result<LinkSummary> {
     let item = item_secret(conn, item_db_id)?;
+    let is_test = item_is_test(conn, item_db_id)?;
     let by_id: HashMap<&str, &PlaidAccount> = plaid.iter().map(|a| (a.account_id.as_str(), a)).collect();
     let already = linked_accounts(conn, item_db_id)?;
     let mut summary = LinkSummary::default();
@@ -313,8 +327,8 @@ pub fn apply_account_choices(
                 };
                 let created = accounts::insert(&tx, &input)?;
                 tx.execute(
-                    "UPDATE accounts SET plaid_item_id = ?1, plaid_account_id = ?2 WHERE id = ?3",
-                    params![item_db_id, p.account_id, created],
+                    "UPDATE accounts SET plaid_item_id = ?1, plaid_account_id = ?2, is_test = ?3 WHERE id = ?4",
+                    params![item_db_id, p.account_id, is_test, created],
                 )?;
                 summary.created += 1;
                 newly_linked = true;
@@ -332,6 +346,13 @@ pub fn apply_account_choices(
                 let acct = accounts::get(&tx, target)?;
                 if acct.linked {
                     return Err(CoreError::Invalid(format!("{} is already connected to a bank.", acct.name)));
+                }
+                if acct.is_test != is_test {
+                    return Err(CoreError::Invalid(if is_test {
+                        format!("{} holds real data, so a Sandbox test connection can't be linked to it.", acct.name)
+                    } else {
+                        format!("{} is a test account, so a real bank can't be linked to it.", acct.name)
+                    }));
                 }
                 if let Some(old) = current {
                     tx.execute(

@@ -12,6 +12,8 @@ pub enum CoreError {
     VaultExists,
     #[error("The vault is locked.")]
     Locked,
+    #[error("Enter your master password to continue.")]
+    PasswordRequired,
     #[error("Incorrect password.")]
     WrongPassword,
     #[error("That recovery key is not valid.")]
@@ -44,6 +46,7 @@ impl CoreError {
             CoreError::VaultMissing => "vault_missing",
             CoreError::VaultExists => "vault_exists",
             CoreError::Locked => "locked",
+            CoreError::PasswordRequired => "password_required",
             CoreError::WrongPassword => "wrong_password",
             CoreError::InvalidRecoveryKey => "invalid_recovery_key",
             CoreError::WeakPassword(_) => "weak_password",

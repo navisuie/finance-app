@@ -70,6 +70,14 @@ The **Sandbox / Production** switch sits next to **Bank connections** on the Acc
 
 Connections belong to the environment they were made in: while Sandbox is active you see and sync your test banks, and your real ones are greyed out with a note, and the reverse. Nothing is deleted by switching.
 
+### Guardrails around live data
+
+* **Sandbox is a separate world.** Accounts created by a Sandbox connection are marked as test data. While Sandbox is active, every list and total — accounts, net worth, assets, debts, transactions, spending — covers that test data only, so you can try the whole app with fake banks. Switch to Production and your real accounts and numbers are back, with the test data out of sight. **Settings → Delete test data** removes it all at once without touching real accounts.
+* **Test and real data can't be mixed.** A Sandbox connection can only be linked to a test account, and a real bank only to a real account. The app refuses anything else.
+* **You always know which mode you're in.** The sidebar shows a SANDBOX or LIVE tag, Sandbox adds a banner across the top, and the window title reads "Finance — SANDBOX (test data)".
+* **Going live needs your password.** Switching to Production, and connecting or reconnecting a bank there, asks for your master password. One confirmation covers the next 10 minutes, and locking the vault clears it.
+* **Connecting a real bank says so.** The Connect dialog states plainly that it uses one of the 10 institutions on Plaid's free Trial plan and that disconnecting doesn't give the slot back.
+
 ### Try Sandbox first
 
 With the Sandbox keys, go to **Accounts → Connect a bank**. Either:

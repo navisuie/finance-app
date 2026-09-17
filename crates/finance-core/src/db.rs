@@ -153,6 +153,13 @@ const MIGRATIONS: &[&str] = &[
     -- Plaid's detailed category, kept for reference.
     ALTER TABLE transactions ADD COLUMN plaid_category TEXT;
     "#,
+    // v3: keep Plaid Sandbox (test) accounts out of the real numbers.
+    r#"
+    ALTER TABLE accounts ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0;
+    UPDATE accounts SET is_test = 1 WHERE plaid_item_id IN (
+        SELECT id FROM plaid_items WHERE access_token LIKE 'access-sandbox-%'
+    );
+    "#,
 ];
 
 pub fn schema_version(conn: &Connection) -> Result<i64> {

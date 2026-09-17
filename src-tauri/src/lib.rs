@@ -53,6 +53,8 @@ pub fn run() {
             commands::set_auto_lock,
             commands::change_password,
             data::list_accounts,
+            data::test_data_summary,
+            data::delete_test_data,
             data::get_account,
             data::create_account,
             data::update_account,
