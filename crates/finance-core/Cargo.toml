@@ -1,0 +1,24 @@
+[package]
+name = "finance-core"
+description = "Encrypted storage and business logic for the personal finance app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# SQLCipher compiled from source with a vendored OpenSSL, so the build does not
+# depend on whatever OpenSSL (if any) is installed on the Mac.
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+argon2 = "0.5"
+aes-gcm = "0.10"
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+data-encoding = "2"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"

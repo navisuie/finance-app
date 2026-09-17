@@ -1,0 +1,20 @@
+[package]
+name = "finance-app"
+description = "Personal finance tracker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "finance_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+finance-core = { path = "../crates/finance-core" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = "1"
