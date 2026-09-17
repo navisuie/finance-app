@@ -62,6 +62,13 @@ To regenerate the full macOS icon set from `app-icon.png`, run `npx tauri icon a
 1. Create a free account at [dashboard.plaid.com](https://dashboard.plaid.com). On the free Trial plan you can connect up to **10 institutions** in Production. Removing a connection does not give the slot back, so connect deliberately.
 2. In the Plaid Dashboard, open **Developers → Keys**. Copy your **client ID** and a **secret**. Each environment has its own secret.
 3. In the app, open **Settings → Bank connections**. Pick the environment, paste both keys, and click **Verify and save**. The app checks the keys with Plaid before storing them.
+4. Sandbox and Production keys are stored separately, so you can save both and switch whenever you like.
+
+### Switching between test and real banks
+
+The **Sandbox / Production** switch sits next to **Bank connections** on the Accounts page (and in Settings). Switching is instant and never asks for keys again.
+
+Connections belong to the environment they were made in: while Sandbox is active you see and sync your test banks, and your real ones are greyed out with a note, and the reverse. Nothing is deleted by switching.
 
 ### Try Sandbox first
 
@@ -108,7 +115,7 @@ Next you choose what to do with each account: **add** it as a new account, **lin
 - **Where the app connects.** All Plaid calls are made by the Rust backend over HTTPS, and only to `sandbox.plaid.com` or `production.plaid.com`. Redirects are never followed. The interface itself still has no network access.
 - **Opening the browser.** The app opens a Plaid link in your browser only after checking that it is an `https://…plaid.com` address.
 - **Auto-lock during sync.** Network calls are never made while the vault is held open. If the vault auto-locks during a sync, nothing is saved.
-- **Test vs real connections.** Connections made with Sandbox keys and with Production keys are kept separate. A test connection can't be synced with Production keys, and the reverse.
+- **Test vs real connections.** Sandbox and Production keys live in separate slots, and each connection is tied to the environment it was made in. A test connection can't be synced with Production keys, and the reverse.
 
 ## Where your data lives
 

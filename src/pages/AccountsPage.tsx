@@ -12,7 +12,13 @@ import { api, errorMessage } from "../lib/api";
 import { formatDate } from "../lib/money";
 import type { Account, HoldingView } from "../lib/types";
 
-export function AccountsPage({ onDataChanged }: { onDataChanged?: () => void }) {
+export function AccountsPage({
+  onDataChanged,
+  onOpenSettings,
+}: {
+  onDataChanged?: () => void;
+  onOpenSettings?: () => void;
+}) {
   const [showArchived, setShowArchived] = useState(false);
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<number>();
@@ -72,7 +78,18 @@ export function AccountsPage({ onDataChanged }: { onDataChanged?: () => void }) 
         </div>
       ) : null}
 
-      {plaid.data && items.data ? <Connections status={plaid.data} items={items.data} onChanged={reloadAll} /> : null}
+      {plaid.data && items.data ? (
+        <Connections
+          status={plaid.data}
+          items={items.data}
+          onChanged={reloadAll}
+          onEnvironmentChanged={() => {
+            plaid.reload();
+            items.reload();
+          }}
+          onOpenSettings={onOpenSettings}
+        />
+      ) : null}
 
       {accounts.error ? <p className="text-sm text-red-600">{accounts.error}</p> : null}
 

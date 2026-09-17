@@ -176,10 +176,18 @@ export interface CategoryInput {
 
 export type PlaidEnvironment = "sandbox" | "production";
 
-export interface PlaidStatus {
+export interface EnvironmentStatus {
+  environment: PlaidEnvironment;
   configured: boolean;
-  environment: PlaidEnvironment | null;
   clientIdHint: string | null;
+}
+
+export interface PlaidStatus {
+  /** Whether the active environment has keys. */
+  configured: boolean;
+  environment: PlaidEnvironment;
+  clientIdHint: string | null;
+  environments: EnvironmentStatus[];
 }
 
 export interface PlaidItem {

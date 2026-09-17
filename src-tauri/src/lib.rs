@@ -82,6 +82,7 @@ pub fn run() {
             bank::plaid_status,
             bank::plaid_save_credentials,
             bank::plaid_clear_credentials,
+            bank::plaid_set_environment,
             bank::plaid_list_items,
             bank::plaid_start_link,
             bank::plaid_start_reconnect,

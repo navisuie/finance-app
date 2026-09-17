@@ -18,7 +18,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
 
-use crate::commands::{blocking, CmdResult};
+use crate::commands::{blocking, CmdError, CmdResult};
 use crate::state::{AppState, PendingLink};
 
 /// Link sessions older than this are abandoned (Hosted Link URLs last 30 min).
@@ -75,12 +75,33 @@ pub async fn plaid_save_credentials(
     .await
 }
 
+/// Remove the keys for one environment ("sandbox" / "production"), or for
+/// both when no environment is given.
 #[tauri::command]
-pub fn plaid_clear_credentials(state: State<'_, AppState>) -> CmdResult<PlaidStatus> {
+pub fn plaid_clear_credentials(
+    state: State<'_, AppState>,
+    environment: Option<String>,
+) -> CmdResult<PlaidStatus> {
+    let env = match environment.as_deref() {
+        Some(e) => Some(config::parse_environment(e).map_err(CmdError::from)?),
+        None => None,
+    };
     Ok(state.with_session(|s| {
-        config::clear(s.conn())?;
+        config::clear(s.conn(), env)?;
         config::status(s.conn())
     })?)
+}
+
+/// Switch between Sandbox and Production. Keys for both are kept, so this is
+/// instant and needs no network call.
+#[tauri::command]
+pub fn plaid_set_environment(state: State<'_, AppState>, environment: String) -> CmdResult<PlaidStatus> {
+    let env = config::parse_environment(&environment).map_err(CmdError::from)?;
+    // Any half-finished Link session belongs to the old environment.
+    if let Ok(mut pending) = state.pending_links.lock() {
+        pending.clear();
+    }
+    Ok(state.with_session(|s| config::set_active_environment(s.conn(), env))?)
 }
 
 #[tauri::command]

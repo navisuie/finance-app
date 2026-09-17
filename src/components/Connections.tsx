@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { api, errorMessage } from "../lib/api";
-import type { PlaidItem, PlaidStatus } from "../lib/types";
+import type { PlaidEnvironment, PlaidItem, PlaidStatus } from "../lib/types";
 import { useConfirm } from "./Confirm";
 import { ConnectBank, type ConnectMode } from "./ConnectBank";
+import { Segmented } from "./Segmented";
 import { Button, Card } from "./ui";
 
 function ago(iso: string | null): string {
@@ -19,12 +20,17 @@ export function Connections({
   status,
   items,
   onChanged,
+  onEnvironmentChanged,
+  onOpenSettings,
 }: {
   status: PlaidStatus;
   items: PlaidItem[];
   onChanged: () => void;
+  onEnvironmentChanged: () => void;
+  onOpenSettings?: () => void;
 }) {
   const [connect, setConnect] = useState<ConnectMode>();
+  const [switching, setSwitching] = useState(false);
   const [syncing, setSyncing] = useState<Set<number>>(new Set());
   const [messages, setMessages] = useState<Record<number, string>>({});
   const [confirm, dialog] = useConfirm();
@@ -48,6 +54,18 @@ export function Connections({
         return n;
       });
       onChanged();
+    }
+  };
+
+  const switchEnvironment = async (env: PlaidEnvironment) => {
+    setSwitching(true);
+    try {
+      await api.plaidSetEnvironment(env);
+      onEnvironmentChanged();
+    } catch (e) {
+      setMessages((m) => ({ ...m, 0: errorMessage(e) }));
+    } finally {
+      setSwitching(false);
     }
   };
 
@@ -79,21 +97,48 @@ export function Connections({
     }
   };
 
-  if (!status.configured && items.length === 0) {
+  const anyKeys = status.environments.some((e) => e.configured);
+  if (!anyKeys && items.length === 0) {
     return (
       <Card>
         <p className="font-medium">Connect your banks</p>
         <p className="mt-1 text-sm text-zinc-500">
-          Add your Plaid keys in Settings to sync balances and transactions automatically.
+          Add your Plaid keys in Settings to sync balances and transactions automatically. You can keep Sandbox and
+          Production keys side by side and switch between them here.
         </p>
+        {onOpenSettings ? (
+          <Button className="mt-4" onClick={onOpenSettings}>
+            Open Settings
+          </Button>
+        ) : null}
       </Card>
     );
   }
 
   return (
     <section className="space-y-2">
-      <div className="flex items-center justify-between px-1">
-        <h2 className="text-sm font-semibold text-zinc-500">Bank connections</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-semibold text-zinc-500">Bank connections</h2>
+          <Segmented
+            label="Plaid environment"
+            value={status.environment}
+            disabled={switching}
+            onChange={switchEnvironment}
+            options={[
+              { value: "sandbox", label: "Sandbox", title: "Test banks with fake data" },
+              { value: "production", label: "Production", title: "Your real banks" },
+            ]}
+          />
+          {status.environment === "sandbox" ? (
+            <span className="text-xs text-amber-700 dark:text-amber-300">Test data</span>
+          ) : null}
+          {!status.configured ? (
+            <button className="text-xs text-brand-700 hover:underline dark:text-brand-500" onClick={onOpenSettings}>
+              Add {status.environment} keys
+            </button>
+          ) : null}
+        </div>
         <div className="flex gap-2">
           {items.length > 0 ? (
             <Button variant="secondary" className="py-1" onClick={syncAll} disabled={syncing.size > 0 || !status.configured}>
@@ -105,6 +150,7 @@ export function Connections({
           </Button>
         </div>
       </div>
+      {messages[0] ? <p className="px-1 text-sm text-red-600">{messages[0]}</p> : null}
       {items.length === 0 ? (
         <p className="px-1 text-sm text-zinc-500">No banks connected yet.</p>
       ) : (
@@ -112,7 +158,7 @@ export function Connections({
           {items.map((item) => {
             const wrongEnv = item.environment !== status.environment;
             return (
-              <div key={item.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <div key={item.id} className={`flex flex-wrap items-center gap-3 px-4 py-3 ${wrongEnv ? "opacity-60" : ""}`}>
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">
                     {item.institutionName}
@@ -128,7 +174,9 @@ export function Connections({
                     <p className="text-xs text-red-600">{item.lastError}</p>
                   ) : null}
                   {wrongEnv ? (
-                    <p className="text-xs text-zinc-500">Connected in {item.environment}; switch Plaid environment in Settings to sync it.</p>
+                    <p className="text-xs text-zinc-500">
+                      Connected in {item.environment}. Switch to {item.environment} above to sync it.
+                    </p>
                   ) : null}
                   {messages[item.id] ? <p className="text-xs text-zinc-500">{messages[item.id]}</p> : null}
                 </div>

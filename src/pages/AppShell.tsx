@@ -113,7 +113,7 @@ export function AppShell({ onLock }: { onLock: () => void }) {
         <PrivacyContext.Provider value={hideBalances}>
         {section === "dashboard" && <Dashboard key={dataVersion} onNavigate={setSection} />}
         {section === "settings" && <SettingsPage />}
-        {section === "accounts" && <AccountsPage key={dataVersion} />}
+        {section === "accounts" && <AccountsPage key={dataVersion} onOpenSettings={() => setSection("settings")} />}
         {section === "transactions" && <TransactionsPage />}
         {section === "budgets" && <Placeholder title="Budgets" phase={3} detail="Monthly limits per category with progress bars." />}
         {section === "goals" && <Placeholder title="Goals" phase={3} detail="Savings targets like a house down payment or emergency fund." />}

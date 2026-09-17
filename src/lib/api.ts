@@ -135,7 +135,9 @@ export const api = {
   plaidStatus: () => invoke<PlaidStatus>("plaid_status"),
   plaidSaveCredentials: (environment: string, clientId: string, secret: string) =>
     invoke<PlaidStatus>("plaid_save_credentials", { environment, clientId, secret }),
-  plaidClearCredentials: () => invoke<PlaidStatus>("plaid_clear_credentials"),
+  plaidClearCredentials: (environment?: string) =>
+    invoke<PlaidStatus>("plaid_clear_credentials", { environment: environment ?? null }),
+  plaidSetEnvironment: (environment: string) => invoke<PlaidStatus>("plaid_set_environment", { environment }),
   plaidListItems: () => invoke<PlaidItem[]>("plaid_list_items"),
   plaidStartLink: (kind: "banking" | "investments") => invoke<LinkStart>("plaid_start_link", { kind }),
   plaidStartReconnect: (itemId: number) => invoke<LinkStart>("plaid_start_reconnect", { itemId }),
