@@ -183,7 +183,9 @@ function AccountCard({ account: a, onOpen }: { account: Account; onOpen: () => v
 function AccountDetail({ id, onBack, onChanged }: { id: number; onBack: () => void; onChanged: () => void }) {
   const account = useAsync(() => api.getAccount(id), [id]);
   const history = useAsync(() => api.balanceHistory(id), [id]);
-  const all = useAsync(() => api.listAccounts(true, "all"), [id]);
+  // Scoped to the active environment, so the account picker in the
+  // transaction list never mixes test accounts into Production.
+  const all = useAsync(() => api.listAccounts(true), [id]);
   const categories = useAsync(() => api.listCategories(), []);
   const holdings = useAsync(() => api.listHoldings(id), [id]);
   const [editing, setEditing] = useState(false);

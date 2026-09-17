@@ -86,6 +86,10 @@ export function Connections({
   };
 
   const anyKeys = status.environments.some((e) => e.configured);
+  // Connections from the other environment aren't shown here: test banks
+  // belong to Sandbox, real banks to Production.
+  const visible = items.filter((i) => i.environment === status.environment);
+
   if (!anyKeys && items.length === 0) {
     return (
       <Card>
@@ -125,7 +129,7 @@ export function Connections({
           ) : null}
         </div>
         <div className="flex gap-2">
-          {items.length > 0 ? (
+          {visible.length > 0 ? (
             <Button variant="secondary" className="py-1" onClick={syncAll} disabled={syncing.size > 0 || !status.configured}>
               {syncing.size > 0 ? "Syncing…" : "Sync all"}
             </Button>
@@ -136,14 +140,15 @@ export function Connections({
         </div>
       </div>
       {messages[0] ? <p className="px-1 text-sm text-red-600">{messages[0]}</p> : null}
-      {items.length === 0 ? (
-        <p className="px-1 text-sm text-zinc-500">No banks connected yet.</p>
+      {visible.length === 0 ? (
+        <p className="px-1 text-sm text-zinc-500">
+          {status.environment === "sandbox" ? "No test banks connected yet." : "No banks connected yet."}
+        </p>
       ) : (
         <div className="divide-y divide-zinc-100 rounded-xl bg-white ring-1 ring-zinc-200 dark:divide-zinc-800 dark:bg-zinc-900 dark:ring-zinc-800">
-          {items.map((item) => {
-            const wrongEnv = item.environment !== status.environment;
+          {visible.map((item) => {
             return (
-              <div key={item.id} className={`flex flex-wrap items-center gap-3 px-4 py-3 ${wrongEnv ? "opacity-60" : ""}`}>
+              <div key={item.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">
                     {item.institutionName}
@@ -158,24 +163,19 @@ export function Connections({
                   ) : item.status === "error" && item.lastError ? (
                     <p className="text-xs text-red-600">{item.lastError}</p>
                   ) : null}
-                  {wrongEnv ? (
-                    <p className="text-xs text-zinc-500">
-                      Connected in {item.environment}. Switch to {item.environment} above to sync it.
-                    </p>
-                  ) : null}
                   {messages[item.id] ? <p className="text-xs text-zinc-500">{messages[item.id]}</p> : null}
                 </div>
-                {item.linkedAccountCount === 0 && !wrongEnv ? (
+                {item.linkedAccountCount === 0 ? (
                   <Button className="py-1" onClick={() => setConnect({ type: "map", itemId: item.id, name: item.institutionName })}>
                     Choose accounts
                   </Button>
                 ) : null}
-                {item.status === "needs_reauth" && !wrongEnv ? (
+                {item.status === "needs_reauth" ? (
                   <Button className="py-1" onClick={() => setConnect({ type: "reconnect", itemId: item.id, name: item.institutionName })}>
                     Reconnect
                   </Button>
                 ) : null}
-                {item.linkedAccountCount > 0 && !wrongEnv ? (
+                {item.linkedAccountCount > 0 ? (
                   <>
                     {item.status !== "needs_reauth" ? (
                       <Button variant="secondary" className="py-1" disabled={syncing.has(item.id)} onClick={() => sync(item)}>
