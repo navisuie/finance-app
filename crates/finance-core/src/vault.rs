@@ -26,6 +26,8 @@ const META_FILE: &str = "vault.json";
 const DB_FILE: &str = "vault.db";
 const FORMAT: &str = "finance-app-vault";
 const FORMAT_VERSION: u32 = 1;
+const BACKUP_FORMAT: &str = "finance-app-backup";
+const BACKUP_FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct VaultMeta {
@@ -41,6 +43,17 @@ struct VaultMeta {
 pub struct Opened {
     pub session: Session,
     pub recovery_key: Zeroizing<String>,
+}
+
+/// An encrypted export of a vault: `vault.json` and `vault.db`, sealed
+/// together under a key derived from the master password. Self-contained —
+/// restoring it doesn't need anything from the machine it was made on.
+#[derive(Debug, Serialize, Deserialize)]
+struct BackupFile {
+    format: String,
+    version: u32,
+    created_at: String,
+    sealed: crypto::SealedBlob,
 }
 
 pub struct Vault;
@@ -117,6 +130,48 @@ impl Vault {
         write_meta(dir, &meta)?;
         Ok(Opened { session: Session { conn, dir: dir.to_path_buf() }, recovery_key: new_text })
     }
+
+    /// Restore a backup made by [`Session::export_backup`] into `dir`, which
+    /// must not already hold a vault — this is for a fresh install, not for
+    /// overwriting a live one (remove the existing vault first if that's
+    /// really what's wanted).
+    pub fn restore_backup(dir: &Path, backup: &[u8], password: &str) -> Result<Session> {
+        if Self::exists(dir) {
+            return Err(CoreError::VaultExists);
+        }
+        let file: BackupFile = serde_json::from_slice(backup)
+            .map_err(|_| CoreError::Invalid("That doesn't look like a Finance backup file.".into()))?;
+        if file.format != BACKUP_FORMAT || file.version != BACKUP_FORMAT_VERSION {
+            return Err(CoreError::Invalid("That backup was made by a different version of the app.".into()));
+        }
+        let plaintext = crypto::open_bytes(password.as_bytes(), &file.sealed)?;
+        if plaintext.len() < 4 {
+            return Err(CoreError::CorruptVault);
+        }
+        let meta_len = u32::from_le_bytes(plaintext[0..4].try_into().unwrap()) as usize;
+        let meta_bytes = plaintext.get(4..4 + meta_len).ok_or(CoreError::CorruptVault)?;
+        let meta: VaultMeta = serde_json::from_slice(meta_bytes).map_err(|_| CoreError::CorruptVault)?;
+        if meta.format != FORMAT || meta.version != FORMAT_VERSION {
+            return Err(CoreError::CorruptVault);
+        }
+        let db_bytes = &plaintext[4 + meta_len..];
+
+        ensure_private_dir(dir)?;
+        remove_db_files(dir)?;
+        write_private_file(&dir.join(DB_FILE), db_bytes)?;
+        write_meta(dir, &meta)?;
+
+        // Confirm it actually unlocks; clean up rather than leave a vault
+        // directory that exists but nobody has the password to.
+        match Self::unlock(dir, password) {
+            Ok(session) => Ok(session),
+            Err(e) => {
+                let _ = remove_db_files(dir);
+                let _ = fs::remove_file(dir.join(META_FILE));
+                Err(e)
+            }
+        }
+    }
 }
 
 /// An unlocked vault. Drop it to lock.
@@ -162,6 +217,27 @@ impl Session {
 
     pub fn lock(self) {
         drop(self);
+    }
+
+    /// An encrypted, self-contained export of this vault (`vault.json` +
+    /// `vault.db`), restorable with `password` on this machine or a fresh
+    /// install. Verifies `password` first so an export can't be made without
+    /// proving you know it.
+    pub fn export_backup(&self, password: &str) -> Result<Vec<u8>> {
+        self.export_backup_with(password, KdfParams::DEFAULT)
+    }
+
+    pub(crate) fn export_backup_with(&self, password: &str, kdf: KdfParams) -> Result<Vec<u8>> {
+        self.verify_password(password)?;
+        let meta_bytes = fs::read(self.dir.join(META_FILE))?;
+        let db_bytes = fs::read(self.dir.join(DB_FILE))?;
+        let mut plaintext = Vec::with_capacity(4 + meta_bytes.len() + db_bytes.len());
+        plaintext.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+        plaintext.extend_from_slice(&meta_bytes);
+        plaintext.extend_from_slice(&db_bytes);
+        let sealed = crypto::seal_bytes(password.as_bytes(), &plaintext, kdf)?;
+        let file = BackupFile { format: BACKUP_FORMAT.into(), version: BACKUP_FORMAT_VERSION, created_at: now(), sealed };
+        Ok(serde_json::to_vec_pretty(&file)?)
     }
 }
 
@@ -220,10 +296,11 @@ fn read_meta(dir: &Path) -> Result<VaultMeta> {
     Ok(meta)
 }
 
-/// Atomic write: temp file, fsync, rename.
-fn write_meta(dir: &Path, meta: &VaultMeta) -> Result<()> {
-    let tmp = dir.join(format!("{META_FILE}.tmp"));
-    let data = serde_json::to_vec_pretty(meta)?;
+/// Atomic write: temp file (0600), fsync, rename.
+fn write_private_file(path: &Path, data: &[u8]) -> Result<()> {
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
     {
         let mut opts = OpenOptions::new();
         opts.write(true).create(true).truncate(true);
@@ -233,12 +310,16 @@ fn write_meta(dir: &Path, meta: &VaultMeta) -> Result<()> {
             opts.mode(0o600);
         }
         let mut f = opts.open(&tmp)?;
-        f.write_all(&data)?;
+        f.write_all(data)?;
         f.sync_all()?;
     }
-    fs::rename(&tmp, dir.join(META_FILE))?;
-    restrict_permissions(&dir.join(META_FILE))?;
+    fs::rename(&tmp, path)?;
+    restrict_permissions(path)?;
     Ok(())
+}
+
+fn write_meta(dir: &Path, meta: &VaultMeta) -> Result<()> {
+    write_private_file(&dir.join(META_FILE), &serde_json::to_vec_pretty(meta)?)
 }
 
 fn ensure_private_dir(dir: &Path) -> Result<()> {
@@ -407,5 +488,50 @@ mod tests {
     fn missing_vault_reports_missing() {
         let dir = tempfile::tempdir().unwrap();
         assert!(matches!(Vault::unlock(dir.path(), PW), Err(CoreError::VaultMissing)));
+    }
+
+    #[test]
+    fn backup_round_trips_to_a_fresh_directory() {
+        let (_dir, opened) = new_vault();
+        settings::set(opened.session.conn(), "canary", "restored-ok").unwrap();
+        let backup = opened.session.export_backup_with(PW, T).unwrap();
+        drop(opened);
+
+        let restore_dir = tempfile::tempdir().unwrap();
+        let session = Vault::restore_backup(restore_dir.path(), &backup, PW).unwrap();
+        assert_eq!(settings::get(session.conn(), "canary").unwrap().as_deref(), Some("restored-ok"));
+        drop(session);
+
+        // The restored vault behaves like any other: same password unlocks it.
+        Vault::unlock(restore_dir.path(), PW).unwrap();
+    }
+
+    #[test]
+    fn backup_requires_the_correct_password_to_export_or_restore() {
+        let (_dir, opened) = new_vault();
+        assert!(matches!(opened.session.export_backup_with(PW2, T), Err(CoreError::WrongPassword)));
+        let backup = opened.session.export_backup_with(PW, T).unwrap();
+        drop(opened);
+
+        let restore_dir = tempfile::tempdir().unwrap();
+        assert!(matches!(Vault::restore_backup(restore_dir.path(), &backup, PW2), Err(CoreError::WrongPassword)));
+        // A failed restore doesn't leave a half-written vault blocking retry.
+        assert!(!Vault::exists(restore_dir.path()));
+        Vault::restore_backup(restore_dir.path(), &backup, PW).unwrap();
+    }
+
+    #[test]
+    fn restore_refuses_to_overwrite_an_existing_vault() {
+        let (dir, opened) = new_vault();
+        let backup = opened.session.export_backup_with(PW, T).unwrap();
+        drop(opened);
+        assert!(matches!(Vault::restore_backup(dir.path(), &backup, PW), Err(CoreError::VaultExists)));
+    }
+
+    #[test]
+    fn garbage_backup_file_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Vault::restore_backup(dir.path(), b"not a backup", PW).is_err());
+        assert!(!Vault::exists(dir.path()));
     }
 }

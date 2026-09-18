@@ -25,6 +25,9 @@ const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 /// Associated data binds wrapped keys to this format version.
 const AAD: &[u8] = b"finance-app/vault/v1";
+/// Separate AAD for backup blobs, so a sealed backup can never be mistaken
+/// for (or substituted as) a key slot, or vice versa.
+const BACKUP_AAD: &[u8] = b"finance-app/backup/v1";
 
 pub type SecretKey = Zeroizing<[u8; KEY_LEN]>;
 
@@ -92,46 +95,74 @@ pub fn derive_kek(secret: &[u8], salt: &[u8], params: KdfParams) -> Result<Secre
     Ok(out)
 }
 
-/// Wrap `dek` under a key derived from `secret`.
-pub fn seal_slot(secret: &[u8], dek: &SecretKey, params: KdfParams) -> Result<KeySlot> {
+/// AES-256-GCM-encrypt `plaintext` under a key derived from `secret`,
+/// returning the random salt, nonce and ciphertext (all base64) needed to
+/// reverse it. Shared by `seal_slot` (wrapping a 32-byte key) and
+/// `seal_bytes` (wrapping an arbitrary-length backup blob) — the only
+/// difference is the AAD, so the two can never be interchanged.
+fn seal(secret: &[u8], plaintext: &[u8], params: KdfParams, aad: &[u8]) -> Result<(String, String, String)> {
     let salt: [u8; SALT_LEN] = random_bytes();
     let nonce: [u8; NONCE_LEN] = random_bytes();
     let kek = derive_kek(secret, &salt, params)?;
     let cipher = Aes256Gcm::new(kek.as_ref().into());
-    let mut ct = dek.to_vec();
-    cipher
-        .encrypt_in_place(&nonce.into(), AAD, &mut ct)
-        .map_err(|_| CoreError::Crypto)?;
-    Ok(KeySlot {
-        kdf: params,
-        salt: BASE64.encode(&salt),
-        nonce: BASE64.encode(&nonce),
-        wrapped_key: BASE64.encode(&ct),
-    })
+    let mut ct = plaintext.to_vec();
+    cipher.encrypt_in_place(&nonce.into(), aad, &mut ct).map_err(|_| CoreError::Crypto)?;
+    Ok((BASE64.encode(&salt), BASE64.encode(&nonce), BASE64.encode(&ct)))
 }
 
-/// Unwrap the data key. Any failure (wrong secret or tampered slot) yields
+/// Reverses `seal`. Any failure (wrong secret or tampered data) yields
 /// `WrongPassword`: AES-GCM authentication cannot tell the two apart.
-pub fn open_slot(secret: &[u8], slot: &KeySlot) -> Result<SecretKey> {
-    let salt = BASE64.decode(slot.salt.as_bytes()).map_err(|_| CoreError::CorruptVault)?;
-    let nonce = BASE64.decode(slot.nonce.as_bytes()).map_err(|_| CoreError::CorruptVault)?;
-    let ct = BASE64.decode(slot.wrapped_key.as_bytes()).map_err(|_| CoreError::CorruptVault)?;
+fn open(secret: &[u8], salt: &str, nonce: &str, ciphertext: &str, params: KdfParams, aad: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+    let salt = BASE64.decode(salt.as_bytes()).map_err(|_| CoreError::CorruptVault)?;
+    let nonce = BASE64.decode(nonce.as_bytes()).map_err(|_| CoreError::CorruptVault)?;
+    let ct = BASE64.decode(ciphertext.as_bytes()).map_err(|_| CoreError::CorruptVault)?;
     if salt.len() != SALT_LEN || nonce.len() != NONCE_LEN {
         return Err(CoreError::CorruptVault);
     }
-    let kek = derive_kek(secret, &salt, slot.kdf)?;
+    let kek = derive_kek(secret, &salt, params)?;
     let cipher = Aes256Gcm::new(kek.as_ref().into());
     let nonce: [u8; NONCE_LEN] = nonce.try_into().map_err(|_| CoreError::CorruptVault)?;
     let mut pt = Zeroizing::new(ct);
-    cipher
-        .decrypt_in_place(&nonce.into(), AAD, &mut *pt)
-        .map_err(|_| CoreError::WrongPassword)?;
+    cipher.decrypt_in_place(&nonce.into(), aad, &mut *pt).map_err(|_| CoreError::WrongPassword)?;
+    Ok(pt)
+}
+
+/// Wrap `dek` under a key derived from `secret`.
+pub fn seal_slot(secret: &[u8], dek: &SecretKey, params: KdfParams) -> Result<KeySlot> {
+    let (salt, nonce, wrapped_key) = seal(secret, dek.as_ref(), params, AAD)?;
+    Ok(KeySlot { kdf: params, salt, nonce, wrapped_key })
+}
+
+/// Unwrap the data key.
+pub fn open_slot(secret: &[u8], slot: &KeySlot) -> Result<SecretKey> {
+    let pt = open(secret, &slot.salt, &slot.nonce, &slot.wrapped_key, slot.kdf, AAD)?;
     if pt.len() != KEY_LEN {
         return Err(CoreError::CorruptVault);
     }
     let mut dek = Zeroizing::new([0u8; KEY_LEN]);
     dek.copy_from_slice(&pt);
     Ok(dek)
+}
+
+/// A sealed arbitrary-length blob (as opposed to a fixed 32-byte key slot) —
+/// used for encrypted vault backups.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SealedBlob {
+    pub kdf: KdfParams,
+    pub salt: String,
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
+/// Encrypt `plaintext` (e.g. a vault backup) under a key derived from `secret`.
+pub fn seal_bytes(secret: &[u8], plaintext: &[u8], params: KdfParams) -> Result<SealedBlob> {
+    let (salt, nonce, ciphertext) = seal(secret, plaintext, params, BACKUP_AAD)?;
+    Ok(SealedBlob { kdf: params, salt, nonce, ciphertext })
+}
+
+/// Reverses `seal_bytes`.
+pub fn open_bytes(secret: &[u8], blob: &SealedBlob) -> Result<Zeroizing<Vec<u8>>> {
+    open(secret, &blob.salt, &blob.nonce, &blob.ciphertext, blob.kdf, BACKUP_AAD)
 }
 
 #[cfg(test)]
@@ -170,6 +201,25 @@ mod tests {
         let b = seal_slot(b"pw", &dek, KdfParams::TEST).unwrap();
         assert_ne!(a.salt, b.salt);
         assert_ne!(a.wrapped_key, b.wrapped_key);
+    }
+
+    #[test]
+    fn seal_bytes_round_trips_arbitrary_length_data() {
+        let data = b"a backup blob, longer than 32 bytes and not key-shaped at all";
+        let blob = seal_bytes(b"correct horse battery", data, KdfParams::TEST).unwrap();
+        let out = open_bytes(b"correct horse battery", &blob).unwrap();
+        assert_eq!(&out[..], data);
+        assert!(matches!(open_bytes(b"wrong", &blob), Err(CoreError::WrongPassword)));
+    }
+
+    #[test]
+    fn a_slot_and_a_blob_are_not_interchangeable() {
+        // Same secret and plaintext length (32 bytes), but different AAD:
+        // a key slot must never be openable as a blob or vice versa.
+        let dek = random_key();
+        let slot = seal_slot(b"pw", &dek, KdfParams::TEST).unwrap();
+        let fake_blob = SealedBlob { kdf: slot.kdf, salt: slot.salt, nonce: slot.nonce, ciphertext: slot.wrapped_key };
+        assert!(open_bytes(b"pw", &fake_blob).is_err());
     }
 }
 

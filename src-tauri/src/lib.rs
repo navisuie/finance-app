@@ -17,6 +17,7 @@ const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // ~/Library/Application Support/com.navi.financeapp on macOS
             let data_dir = app.path().app_data_dir()?;
@@ -48,6 +49,8 @@ pub fn run() {
             commands::vault_create,
             commands::vault_unlock,
             commands::vault_recover,
+            commands::vault_restore,
+            commands::export_backup,
             commands::vault_lock,
             commands::activity,
             commands::get_settings,

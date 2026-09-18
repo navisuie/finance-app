@@ -1,3 +1,4 @@
+import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState, type FormEvent } from "react";
 import { Button, Card, PasswordField } from "../components/ui";
 import { StrengthMeter } from "../components/StrengthMeter";
@@ -6,6 +7,7 @@ import { PlaidSettings } from "../components/PlaidSettings";
 import { api, errorMessage, type AppSettings } from "../lib/api";
 import type { ImportProfile } from "../lib/types";
 import { MIN_LENGTH } from "../lib/password";
+import { todayISO } from "../lib/money";
 
 const LOCK_OPTIONS = [1, 2, 5, 10, 15, 30, 60];
 
@@ -59,12 +61,63 @@ export function SettingsPage() {
 
       <ChangePassword />
 
+      <BackupSettings />
+
       <Card title="Coming later">
         <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-500">
-          <li>Touch ID unlock and encrypted backups (phase 5)</li>
+          <li>Touch ID unlock (phase 5)</li>
         </ul>
       </Card>
     </div>
+  );
+}
+
+function BackupSettings() {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string }>();
+
+  const exportBackup = async () => {
+    setMsg(undefined);
+    const path = await save({
+      defaultPath: `finance-backup-${todayISO()}.json`,
+      filters: [{ name: "Finance backup", extensions: ["json"] }],
+    }).catch(() => null);
+    if (!path) return;
+    setBusy(true);
+    try {
+      await api.exportBackup(password, path);
+      setPassword("");
+      setMsg({ ok: true, text: `Saved to ${path}.` });
+    } catch (err) {
+      setMsg({ ok: false, text: errorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Backups">
+      <p className="mb-3 text-sm text-zinc-500">
+        A single encrypted file with everything in your vault — keep it on an external drive or in iCloud. Restoring
+        it needs this same password.
+      </p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          exportBackup();
+        }}
+        className="space-y-4"
+      >
+        <PasswordField label="Confirm your master password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        {msg ? (
+          <p className={`text-sm ${msg.ok ? "text-brand-700 dark:text-brand-500" : "text-red-600 dark:text-red-400"}`}>{msg.text}</p>
+        ) : null}
+        <Button type="submit" disabled={busy || !password}>
+          {busy ? "Encrypting…" : "Export encrypted backup…"}
+        </Button>
+      </form>
+    </Card>
   );
 }
 

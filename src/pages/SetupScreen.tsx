@@ -1,3 +1,4 @@
+import { open } from "@tauri-apps/plugin-dialog";
 import { useState, type FormEvent } from "react";
 import { CenteredPanel, Button, Logo, PasswordField } from "../components/ui";
 import { StrengthMeter } from "../components/StrengthMeter";
@@ -11,6 +12,15 @@ export function SetupScreen({ onReady }: { onReady: () => void }) {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [recoveryKey, setRecoveryKey] = useState<string>();
+  const [restoring, setRestoring] = useState(false);
+
+  if (restoring) {
+    return (
+      <CenteredPanel>
+        <RestoreForm onDone={onReady} onCancel={() => setRestoring(false)} />
+      </CenteredPanel>
+    );
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -73,7 +83,70 @@ export function SetupScreen({ onReady }: { onReady: () => void }) {
           There is no password reset by email. If you forget this password, only your recovery key can unlock the
           vault.
         </p>
+        <button
+          type="button"
+          className="w-full text-center text-sm text-zinc-500 hover:underline"
+          onClick={() => setRestoring(true)}
+        >
+          Restore from a backup instead
+        </button>
       </form>
     </CenteredPanel>
+  );
+}
+
+function RestoreForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const [path, setPath] = useState<string>();
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  const pickFile = async () => {
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "Finance backup", extensions: ["json"] }],
+    }).catch(() => null);
+    if (typeof picked === "string") setPath(picked);
+  };
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!path) return;
+    setError(undefined);
+    setBusy(true);
+    try {
+      await api.vaultRestore(path, password);
+      onDone();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-5">
+      <div className="flex items-center gap-3">
+        <Logo />
+        <div>
+          <h1 className="text-xl font-semibold">Restore from a backup</h1>
+          <p className="text-sm text-zinc-500">Pick an encrypted Finance backup file and its password.</p>
+        </div>
+      </div>
+      <div>
+        <Button type="button" variant="secondary" className="w-full" onClick={pickFile}>
+          {path ? "Choose a different file…" : "Choose backup file…"}
+        </Button>
+        {path ? <p className="mt-1.5 truncate text-xs text-zinc-500">{path}</p> : null}
+      </div>
+      <PasswordField label="Backup password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+      {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      <Button type="submit" className="w-full" disabled={busy || !path || !password}>
+        {busy ? "Restoring…" : "Restore"}
+      </Button>
+      <button type="button" className="w-full text-center text-sm text-zinc-500 hover:underline" onClick={onCancel}>
+        Cancel
+      </button>
+    </form>
   );
 }

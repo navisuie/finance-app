@@ -105,6 +105,10 @@ export const api = {
   setAutoLock: (minutes: number) => invoke<AppSettings>("set_auto_lock", { minutes }),
   changePassword: (currentPassword: string, newPassword: string) =>
     invoke<void>("change_password", { currentPassword, newPassword }),
+  /** Writes an encrypted backup to `path` (chosen via a native save dialog). */
+  exportBackup: (password: string, path: string) => invoke<void>("export_backup", { password, path }),
+  /** Restores a fresh vault from a backup file at `backupPath`. Only valid before a vault exists. */
+  vaultRestore: (backupPath: string, password: string) => invoke<void>("vault_restore", { backupPath, password }),
 
   // Accounts
   /** `scope` defaults to the active environment's data. */

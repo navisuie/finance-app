@@ -120,6 +120,52 @@ pub async fn vault_recover(
     .await
 }
 
+/// Restore into `path` a backup file at `backup_path`. The webview only
+/// picked the paths (via the native dialog); the file itself is read here.
+#[tauri::command]
+pub async fn vault_restore(app: AppHandle, backup_path: String, password: String) -> CmdResult<()> {
+    let password = Zeroizing::new(password);
+    blocking(app, move |state| {
+        state.throttle.lock().map_err(|_| CoreError::Crypto)?.check()?;
+        let backup = std::fs::read(&backup_path)
+            .map_err(|_| CoreError::Invalid("Couldn't read that file.".into()))?;
+        match Vault::restore_backup(&state.data_dir, &backup, &password) {
+            Ok(session) => {
+                state.throttle.lock().map_err(|_| CoreError::Crypto)?.record_success();
+                let minutes = settings::load(session.conn())?.auto_lock_minutes;
+                state.set_session(session, minutes);
+                Ok(())
+            }
+            Err(e) => {
+                if matches!(e, CoreError::WrongPassword) {
+                    state.throttle.lock().map_err(|_| CoreError::Crypto)?.record_failure();
+                }
+                Err(e)
+            }
+        }
+    })
+    .await
+}
+
+/// Writes an encrypted backup of the current vault to `path` (chosen by the
+/// webview via the native save dialog).
+#[tauri::command]
+pub async fn export_backup(app: AppHandle, password: String, path: String) -> CmdResult<()> {
+    let password = Zeroizing::new(password);
+    blocking(app, move |state| {
+        state.throttle.lock().map_err(|_| CoreError::Crypto)?.check()?;
+        let r = state.with_session(|s| s.export_backup(&password));
+        if matches!(r, Err(CoreError::WrongPassword)) {
+            state.throttle.lock().map_err(|_| CoreError::Crypto)?.record_failure();
+        } else if r.is_ok() {
+            state.throttle.lock().map_err(|_| CoreError::Crypto)?.record_success();
+        }
+        let bytes = r?;
+        std::fs::write(&path, bytes).map_err(|_| CoreError::Invalid("Couldn't write that file.".into()))
+    })
+    .await
+}
+
 #[tauri::command]
 pub fn vault_lock(app: AppHandle, state: State<'_, AppState>) {
     if state.lock() {
