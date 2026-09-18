@@ -160,6 +160,17 @@ const MIGRATIONS: &[&str] = &[
         SELECT id FROM plaid_items WHERE access_token LIKE 'access-sandbox-%'
     );
     "#,
+    // v4: debts you track by hand, and payments linked to them.
+    r#"
+    -- Annual rate in basis points (6.49% = 649), and the payment you usually make.
+    ALTER TABLE accounts ADD COLUMN apr_bps INTEGER;
+    ALTER TABLE accounts ADD COLUMN monthly_payment_cents INTEGER;
+    -- Money moved to one of your own accounts (a loan payment, a card
+    -- payment, a transfer to savings) rather than spent.
+    ALTER TABLE transactions ADD COLUMN transfer_account_id INTEGER
+        REFERENCES accounts(id) ON DELETE SET NULL;
+    CREATE INDEX idx_tx_transfer ON transactions(transfer_account_id);
+    "#,
 ];
 
 pub fn schema_version(conn: &Connection) -> Result<i64> {

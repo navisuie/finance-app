@@ -5,6 +5,7 @@ import type {
   AccountInput,
   BalanceSnapshot,
   Category,
+  DebtSummary,
   CategoryInput,
   CsvMapping,
   Detection,
@@ -104,6 +105,7 @@ export const api = {
   deleteBalance: (id: number) => invoke<void>("delete_balance", { id }),
   balanceHistory: (accountId: number) => invoke<BalanceSnapshot[]>("balance_history", { accountId }),
   netWorth: () => invoke<NetWorth>("net_worth"),
+  debtSummary: (accountId: number) => invoke<DebtSummary>("debt_summary", { accountId }),
 
   // Categories
   listCategories: () => invoke<Category[]>("list_categories"),

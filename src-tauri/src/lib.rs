@@ -64,6 +64,7 @@ pub fn run() {
             data::delete_balance,
             data::balance_history,
             data::net_worth,
+            data::debt_summary,
             data::list_categories,
             data::create_category,
             data::update_category,

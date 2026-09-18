@@ -23,6 +23,10 @@ export function AccountForm({
   const [last4, setLast4] = useState(account?.last4 ?? "");
   const [balance, setBalance] = useState(account?.balanceCents != null ? centsToInput(account.balanceCents) : "");
   const [asOf, setAsOf] = useState(todayISO());
+  const [apr, setApr] = useState(account?.aprBps != null ? (account.aprBps / 100).toString() : "");
+  const [payment, setPayment] = useState(
+    account?.monthlyPaymentCents != null ? centsToInput(account.monthlyPaymentCents) : "",
+  );
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -39,6 +43,23 @@ export function AccountForm({
         return;
       }
     }
+    let aprBps: number | null = null;
+    if (liability && apr.trim()) {
+      const pct = Number(apr);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 500) {
+        setError("Enter the rate as a percentage, like 6.49.");
+        return;
+      }
+      aprBps = Math.round(pct * 100);
+    }
+    let monthlyPaymentCents: number | null = null;
+    if (liability && payment.trim()) {
+      monthlyPaymentCents = parseMoney(payment);
+      if (monthlyPaymentCents === null || monthlyPaymentCents < 0) {
+        setError("Enter the payment as a number, like 450.00.");
+        return;
+      }
+    }
     setBusy(true);
     try {
       const input = {
@@ -49,6 +70,8 @@ export function AccountForm({
         isAsset: defaultIsAsset(kind),
         balanceCents,
         balanceAsOf: balanceCents !== null ? asOf : null,
+        aprBps,
+        monthlyPaymentCents,
       };
       const saved = editing ? await api.updateAccount(account.id, input) : await api.createAccount(input);
       onSaved(saved);
@@ -90,7 +113,30 @@ export function AccountForm({
           <p className="text-xs text-zinc-500">Update the balance from the account's page.</p>
         )}
         {liability ? (
-          <p className="text-xs text-zinc-500">Debts count against your net worth. Enter what you owe as a positive number.</p>
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label="Interest rate (optional)"
+                value={apr}
+                onChange={(e) => setApr(e.target.value)}
+                inputMode="decimal"
+                placeholder="6.49"
+                hint="Annual percentage rate"
+              />
+              <Field
+                label="Monthly payment (optional)"
+                value={payment}
+                onChange={(e) => setPayment(e.target.value)}
+                inputMode="decimal"
+                placeholder="450.00"
+                hint="Used to work out your payoff date"
+              />
+            </div>
+            <p className="text-xs text-zinc-500">
+              Debts count against your net worth. Enter what you owe as a positive number. Link the payments you make
+              from a transaction so they don't count as spending.
+            </p>
+          </>
         ) : null}
         {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
         <div className="flex justify-end gap-2">
@@ -108,14 +154,21 @@ export function AccountForm({
 
 export function BalanceForm({
   account,
+  suggestedCents,
+  note,
   onClose,
   onSaved,
 }: {
   account: Account;
+  /** Pre-filled amount, e.g. the balance after linked payments. */
+  suggestedCents?: number;
+  note?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [amount, setAmount] = useState(account.balanceCents != null ? centsToInput(account.balanceCents) : "");
+  const [amount, setAmount] = useState(
+    centsToInput(suggestedCents ?? account.balanceCents ?? 0),
+  );
   const [asOf, setAsOf] = useState(todayISO());
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -151,6 +204,7 @@ export function BalanceForm({
           />
           <Field label="As of" type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
         </div>
+        {note ? <p className="text-xs text-zinc-500">{note}</p> : null}
         <p className="text-xs text-zinc-500">Saving a balance for a date that already has one replaces it.</p>
         {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
         <div className="flex justify-end gap-2">

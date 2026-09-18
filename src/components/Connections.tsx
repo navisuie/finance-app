@@ -89,6 +89,7 @@ export function Connections({
   // Connections from the other environment aren't shown here: test banks
   // belong to Sandbox, real banks to Production.
   const visible = items.filter((i) => i.environment === status.environment);
+  const hidden = items.length - visible.length;
 
   if (!anyKeys && items.length === 0) {
     return (
@@ -199,6 +200,12 @@ export function Connections({
           })}
         </div>
       )}
+      {hidden > 0 ? (
+        <p className="px-1 text-xs text-zinc-400">
+          {hidden} {status.environment === "sandbox" ? "real" : "test"} connection{hidden === 1 ? "" : "s"} hidden. Switch
+          to {status.environment === "sandbox" ? "Production" : "Sandbox"} to see {hidden === 1 ? "it" : "them"}.
+        </p>
+      ) : null}
       {connect ? (
         <ConnectBank mode={connect} environment={status.environment} onClose={() => setConnect(undefined)} onChanged={onChanged} />
       ) : null}

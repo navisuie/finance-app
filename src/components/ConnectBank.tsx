@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, errorMessage, isApiError } from "../lib/api";
 import type { LinkStart, PlaidEnvironment, SyncResult } from "../lib/types";
 import { AccountMapper } from "./AccountMapper";
+import { useProductionPassword } from "./ProductionPassword";
 import { Modal } from "./Modal";
 import { Button } from "./ui";
 
@@ -36,6 +37,7 @@ export function ConnectBank({
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const startedReconnect = useRef(false);
+  const { run, dialog: passwordDialog } = useProductionPassword();
   const changedRef = useRef(onChanged);
   changedRef.current = onChanged;
 
@@ -43,14 +45,11 @@ export function ConnectBank({
     setBusy(true);
     setError(undefined);
     try {
-      const start = await api.plaidStartLink(kind);
-      setStep({ s: "waiting", start });
+      // Asks for the master password in place if the confirmation expired.
+      const start = await run(() => api.plaidStartLink(kind));
+      if (start) setStep({ s: "waiting", start });
     } catch (e) {
-      setError(
-        isApiError(e) && e.code === "password_required"
-          ? "Your confirmation expired. Switch to Production again to re-enter your password."
-          : errorMessage(e),
-      );
+      setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -76,11 +75,10 @@ export function ConnectBank({
   useEffect(() => {
     if (mode.type !== "reconnect" || startedReconnect.current) return;
     startedReconnect.current = true;
-    api
-      .plaidStartReconnect(mode.itemId)
-      .then((start) => setStep({ s: "waiting", start }))
+    run(() => api.plaidStartReconnect(mode.itemId))
+      .then((start) => start && setStep({ s: "waiting", start }))
       .catch((e) => setError(errorMessage(e)));
-  }, [mode]);
+  }, [mode, run]);
 
   // Poll while the user finishes in the browser.
   const token = step.s === "waiting" ? step.start.linkToken : undefined;
@@ -207,6 +205,7 @@ export function ConnectBank({
         </div>
       ) : null}
 
+      {passwordDialog}
       {step.s === "map" ? (
         <AccountMapper
           itemId={step.itemId}

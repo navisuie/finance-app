@@ -160,13 +160,17 @@ impl AppState {
         Ok(())
     }
 
-    /// Require a recent confirmation, or `PasswordRequired`.
+    /// Require a recent confirmation, or `PasswordRequired`. A confirmation
+    /// that is still valid slides forward, so a long connect flow doesn't
+    /// expire halfway through.
     pub fn require_production_confirmed(&self) -> Result<()> {
-        if self.production_confirmed() {
-            Ok(())
-        } else {
-            Err(CoreError::PasswordRequired)
+        if !self.production_confirmed() {
+            return Err(CoreError::PasswordRequired);
         }
+        if let Ok(mut c) = self.production_confirmed_at.lock() {
+            *c = Some(Instant::now());
+        }
+        Ok(())
     }
 }
 

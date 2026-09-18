@@ -55,6 +55,14 @@ To regenerate the full macOS icon set from `app-icon.png`, run `npx tauri icon a
     - **Privacy.** The file is read on your Mac and never uploaded.
 * **Hide balances** (bottom of the sidebar) replaces every amount with •••••.
 
+## Debts you track yourself
+
+Not every debt comes from a bank connection. Add a car loan, a personal loan or a mortgage with **Add account → Loan** (or Mortgage), and enter what you owe as a positive number. It counts against your net worth straight away.
+
+* **Terms.** A debt account can hold its interest rate and your usual monthly payment. With both, its page shows when it will be paid off, how many payments are left, and the interest still to come. If the payment only covers the interest, it says so and tells you the amount that would start reducing the balance.
+* **Linking payments.** On the transaction that leaves your checking account, set **Paid to another account** to the loan. That payment then counts as moving money between your own accounts, not as spending, so it stays out of your spending total and savings rate. It works for credit card payments and transfers to savings too.
+* **Keeping the balance honest.** Linked payments never change the balance by themselves, because part of each payment is interest. The debt's page adds them up ("2 payments totalling $900 since your balance on Aug 1") and suggests a new balance, including an estimate of the interest since then. **Update balance** pre-fills that figure; change it to match your statement and save.
+
 ## Connecting banks with Plaid
 
 ### Setup
@@ -75,7 +83,7 @@ Connections belong to the environment they were made in: while Sandbox is active
 * **Sandbox is a separate world.** Accounts created by a Sandbox connection are marked as test data. While Sandbox is active, every list and total — accounts, net worth, assets, debts, transactions, spending — covers that test data only, so you can try the whole app with fake banks. Switch to Production and your real accounts and numbers are back, with the test data out of sight. **Settings → Delete test data** removes it all at once without touching real accounts.
 * **Test and real data can't be mixed.** A Sandbox connection can only be linked to a test account, and a real bank only to a real account. The app refuses anything else.
 * **You always know which mode you're in.** The sidebar shows a SANDBOX or LIVE tag, Sandbox adds a banner across the top, and the window title reads "Finance — SANDBOX (test data)".
-* **Going live needs your password.** Switching to Production, and connecting or reconnecting a bank there, asks for your master password. One confirmation covers the next 10 minutes, and locking the vault clears it.
+* **Going live needs your password.** Switching to Production, and connecting or reconnecting a bank there, asks for your master password. One confirmation covers the next 10 minutes of live actions and keeps sliding while you're working, and locking the vault clears it. If it does expire in the middle of something, the password box appears right where you are and the action carries on once you've entered it.
 * **Connecting a real bank says so.** The Connect dialog states plainly that it uses one of the 10 institutions on Plaid's free Trial plan and that disconnecting doesn't give the slot back.
 
 ### Try Sandbox first

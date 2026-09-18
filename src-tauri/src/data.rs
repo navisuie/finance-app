@@ -8,6 +8,7 @@ use finance_core::accounts::{self, Account, AccountInput, BalanceSnapshot, NetWo
 use finance_core::plaid::api::Environment;
 use finance_core::plaid::config;
 use finance_core::categories::{self, Category, CategoryInput};
+use finance_core::debt::{self, DebtSummary};
 use finance_core::import::{self, CsvMapping, Detection, ImportProfile, ImportResult, Preview};
 use finance_core::transactions::{
     self, PeriodSummary, Transaction, TransactionFilter, TransactionInput, TransactionPage,
@@ -99,6 +100,12 @@ pub fn delete_balance(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
 #[tauri::command]
 pub fn balance_history(state: State<'_, AppState>, account_id: i64) -> CmdResult<Vec<BalanceSnapshot>> {
     Ok(state.with_session(|s| accounts::balance_history(s.conn(), account_id))?)
+}
+
+/// Payoff projection and linked payments for a debt account.
+#[tauri::command]
+pub fn debt_summary(state: State<'_, AppState>, account_id: i64) -> CmdResult<DebtSummary> {
+    Ok(state.with_session(|s| debt::summary(s.conn(), account_id))?)
 }
 
 #[tauri::command]

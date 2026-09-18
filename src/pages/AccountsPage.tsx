@@ -10,7 +10,8 @@ import { useAsync } from "../hooks/useAsync";
 import { GROUPS, KIND_LABELS } from "../lib/accountKinds";
 import { api, errorMessage } from "../lib/api";
 import { formatDate } from "../lib/money";
-import type { Account, HoldingView } from "../lib/types";
+import { formatCents } from "../lib/money";
+import type { Account, HoldingView, Projection } from "../lib/types";
 
 export function AccountsPage({
   onDataChanged,
@@ -301,6 +302,8 @@ function AccountDetail({ id, onBack, onChanged }: { id: number; onBack: () => vo
       </div>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
+      {!a.isAsset ? <DebtCard account={a} onChanged={refresh} /> : null}
+
       {holdings.data && holdings.data.length > 0 ? <HoldingsTable holdings={holdings.data} /> : null}
 
       <div className="grid grid-cols-[1fr_18rem] gap-6">
@@ -409,6 +412,117 @@ function HoldingsTable({ holdings }: { holdings: HoldingView[] }) {
           ))}
         </tbody>
       </table>
+    </Card>
+  );
+}
+
+function months(n: number): string {
+  const years = Math.floor(n / 12);
+  const rest = n % 12;
+  if (years === 0) return `${rest} month${rest === 1 ? "" : "s"}`;
+  if (rest === 0) return `${years} year${years === 1 ? "" : "s"}`;
+  return `${years} yr ${rest} mo`;
+}
+
+function ProjectionLines({ projection }: { projection: Projection }) {
+  switch (projection.state) {
+    case "clear":
+      return <p className="text-sm text-brand-700 dark:text-brand-500">Nothing owed. Nicely done.</p>;
+    case "incomplete":
+      return (
+        <p className="text-sm text-zinc-500">
+          Add the interest rate and your monthly payment with <span className="font-medium">Edit</span> to see when this
+          is paid off.
+        </p>
+      );
+    case "neverPaidOff":
+      return (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          That payment only covers the interest ({formatCents(projection.monthlyInterestCents)} a month). Pay more than{" "}
+          {formatCents(projection.minimumToMakeProgressCents)} to start reducing the balance.
+        </p>
+      );
+    case "paid":
+      return (
+        <dl className="grid grid-cols-3 gap-4 text-sm">
+          <div>
+            <dt className="text-xs text-zinc-500">Paid off</dt>
+            <dd className="font-medium">{formatDate(projection.payoffOn)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-zinc-500">Payments left</dt>
+            <dd className="font-medium">
+              {projection.months} ({months(projection.months)})
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-zinc-500">Interest from here</dt>
+            <dd className="font-medium">
+              <Money cents={projection.totalInterestCents} />
+            </dd>
+          </div>
+        </dl>
+      );
+  }
+}
+
+/** Payoff projection and the payments you've linked to a debt. */
+function DebtCard({ account, onChanged }: { account: Account; onChanged: () => void }) {
+  const summary = useAsync(() => api.debtSummary(account.id), [account.id, account.balanceCents]);
+  const [updating, setUpdating] = useState(false);
+  const s = summary.data;
+  if (!s) return null;
+
+  const rate = s.aprBps !== null ? `${(s.aprBps / 100).toFixed(2)}%` : "not set";
+  const payment = s.monthlyPaymentCents !== null ? formatCents(s.monthlyPaymentCents) : "not set";
+
+  return (
+    <Card title="Paying this off">
+      <div className="space-y-4">
+        <p className="text-sm text-zinc-500">
+          Rate {rate} · Monthly payment {payment}
+        </p>
+        <ProjectionLines projection={s.projection} />
+
+        {s.payments.count > 0 ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg bg-zinc-50 p-3 text-sm dark:bg-zinc-800/60">
+            <div className="min-w-0 flex-1">
+              <p>
+                {s.payments.count} payment{s.payments.count === 1 ? "" : "s"} totalling{" "}
+                <Money cents={s.payments.totalCents} /> linked
+                {s.payments.since ? ` since your balance on ${formatDate(s.payments.since)}` : ""}.
+              </p>
+              {s.suggestedBalanceCents !== null ? (
+                <p className="text-xs text-zinc-500">
+                  That works out to about <Money cents={s.suggestedBalanceCents} /> owed, including an estimated{" "}
+                  <Money cents={s.estimatedInterestCents} /> of interest. Your balance stays as it is until you apply it.
+                </p>
+              ) : null}
+            </div>
+            <Button variant="secondary" className="py-1" onClick={() => setUpdating(true)}>
+              Update balance
+            </Button>
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-500">
+            Linked payments show up here. On the transaction, set "Paid to another account" to this one.
+          </p>
+        )}
+      </div>
+
+      {updating ? (
+        <BalanceForm
+          account={account}
+          suggestedCents={s.suggestedBalanceCents ?? undefined}
+          note="Pre-filled from the payments you linked plus estimated interest. Change it to match your statement."
+          onClose={() => setUpdating(false)}
+          onSaved={() => {
+            setUpdating(false);
+            summary.reload();
+            onChanged();
+          }}
+        />
+      ) : null}
     </Card>
   );
 }

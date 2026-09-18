@@ -4,6 +4,7 @@ import { KIND_LABELS, KIND_OPTIONS } from "../lib/accountKinds";
 import { api, errorMessage } from "../lib/api";
 import type { AccountChoice, AccountKind, PlaidAccountView, SyncResult } from "../lib/types";
 import { Money } from "./privacy";
+import { useProductionPassword } from "./ProductionPassword";
 import { controlClass } from "./Select";
 import { Button } from "./ui";
 
@@ -43,6 +44,7 @@ export function AccountMapper({
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const { run, dialog: passwordDialog } = useProductionPassword();
 
   useEffect(() => {
     if (views.data) setRows(views.data.map(initialRow));
@@ -65,8 +67,8 @@ export function AccountMapper({
         kind: r.action === "create" ? r.kind : null,
         syncFrom: r.action === "link" && r.syncFrom ? r.syncFrom : null,
       }));
-      const out = await api.plaidLinkAccounts(itemId, choices);
-      onDone(out.sync);
+      const out = await run(() => api.plaidLinkAccounts(itemId, choices));
+      if (out) onDone(out.sync);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -172,6 +174,7 @@ export function AccountMapper({
         </p>
       ) : null}
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {passwordDialog}
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onCancel}>
           Decide later

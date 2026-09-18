@@ -324,6 +324,8 @@ pub fn apply_account_choices(
                     is_asset: None,
                     balance_cents: None,
                     balance_as_of: None,
+                    apr_bps: None,
+                    monthly_payment_cents: None,
                 };
                 let created = accounts::insert(&tx, &input)?;
                 tx.execute(

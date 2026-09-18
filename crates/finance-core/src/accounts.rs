@@ -69,6 +69,10 @@ pub struct Account {
     pub balance_cents: Option<i64>,
     pub balance_as_of: Option<String>,
     pub transaction_count: i64,
+    /// Annual rate in basis points (6.49% = 649), for debts.
+    pub apr_bps: Option<i64>,
+    /// What you usually pay each month, for debts.
+    pub monthly_payment_cents: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,6 +87,8 @@ pub struct AccountInput {
     /// Optional opening balance, recorded as a snapshot.
     pub balance_cents: Option<i64>,
     pub balance_as_of: Option<String>,
+    pub apr_bps: Option<i64>,
+    pub monthly_payment_cents: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -109,6 +115,8 @@ struct Clean {
     institution: Option<String>,
     last4: Option<String>,
     is_asset: bool,
+    apr_bps: Option<i64>,
+    monthly_payment_cents: Option<i64>,
 }
 
 fn validate(input: &AccountInput) -> Result<Clean> {
@@ -127,14 +135,34 @@ fn validate(input: &AccountInput) -> Result<Clean> {
         }
     }
     let is_asset = input.is_asset.unwrap_or_else(|| default_is_asset(&kind));
-    Ok(Clean { name, kind, institution, last4, is_asset })
+    // 0% to 500%, to catch a rate typed as 649 instead of 6.49.
+    if let Some(apr) = input.apr_bps {
+        if !(0..=50_000).contains(&apr) {
+            return Err(CoreError::Invalid("Enter a rate between 0% and 500%.".into()));
+        }
+    }
+    if let Some(p) = input.monthly_payment_cents {
+        if !(0..=crate::transactions::MAX_AMOUNT_CENTS).contains(&p) {
+            return Err(CoreError::Invalid("That payment amount doesn't look right.".into()));
+        }
+    }
+    Ok(Clean {
+        name,
+        kind,
+        institution,
+        last4,
+        is_asset,
+        apr_bps: input.apr_bps,
+        monthly_payment_cents: input.monthly_payment_cents,
+    })
 }
 
 const SELECT: &str = "
     SELECT a.id, a.name, a.kind, a.institution, a.last4, a.is_asset, a.archived,
            a.plaid_account_id IS NOT NULL, a.is_test,
            b.amount_cents, b.as_of,
-           (SELECT count(*) FROM transactions t WHERE t.account_id = a.id)
+           (SELECT count(*) FROM transactions t WHERE t.account_id = a.id),
+           a.apr_bps, a.monthly_payment_cents
     FROM accounts a
     LEFT JOIN balances b ON b.id = (
         SELECT id FROM balances WHERE account_id = a.id ORDER BY as_of DESC, id DESC LIMIT 1
@@ -154,6 +182,8 @@ fn map_row(r: &Row) -> rusqlite::Result<Account> {
         balance_cents: r.get(9)?,
         balance_as_of: r.get(10)?,
         transaction_count: r.get(11)?,
+        apr_bps: r.get(12)?,
+        monthly_payment_cents: r.get(13)?,
     })
 }
 
@@ -220,9 +250,13 @@ pub fn create(conn: &mut Connection, input: &AccountInput) -> Result<Account> {
 pub fn insert(conn: &Connection, input: &AccountInput) -> Result<i64> {
     let c = validate(input)?;
     conn.execute(
-        "INSERT INTO accounts (name, kind, institution, last4, is_asset, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![c.name, c.kind, c.institution, c.last4, c.is_asset, now_rfc3339()],
+        "INSERT INTO accounts (name, kind, institution, last4, is_asset, apr_bps,
+                               monthly_payment_cents, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            c.name, c.kind, c.institution, c.last4, c.is_asset, c.apr_bps, c.monthly_payment_cents,
+            now_rfc3339()
+        ],
     )?;
     let id = conn.last_insert_rowid();
     if let Some(cents) = input.balance_cents {
@@ -238,9 +272,10 @@ pub fn insert(conn: &Connection, input: &AccountInput) -> Result<i64> {
 pub fn update(conn: &Connection, id: i64, input: &AccountInput) -> Result<Account> {
     let c = validate(input)?;
     let n = conn.execute(
-        "UPDATE accounts SET name = ?1, kind = ?2, institution = ?3, last4 = ?4, is_asset = ?5
-         WHERE id = ?6",
-        params![c.name, c.kind, c.institution, c.last4, c.is_asset, id],
+        "UPDATE accounts SET name = ?1, kind = ?2, institution = ?3, last4 = ?4, is_asset = ?5,
+                apr_bps = ?6, monthly_payment_cents = ?7
+         WHERE id = ?8",
+        params![c.name, c.kind, c.institution, c.last4, c.is_asset, c.apr_bps, c.monthly_payment_cents, id],
     )?;
     if n == 0 {
         return Err(CoreError::Invalid("Account not found.".into()));
@@ -338,6 +373,8 @@ pub(crate) mod tests {
             is_asset: None,
             balance_cents: None,
             balance_as_of: None,
+            apr_bps: None,
+            monthly_payment_cents: None,
         }
     }
 
@@ -353,6 +390,30 @@ pub(crate) mod tests {
         assert!(a.is_asset);
         assert_eq!(a.balance_cents, Some(1_500_000));
         assert_eq!(a.balance_as_of.as_deref(), Some("2026-09-01"));
+    }
+
+    #[test]
+    fn debt_terms_round_trip() {
+        let mut c = conn();
+        let mut i = input("Car loan", "loan");
+        i.apr_bps = Some(649);
+        i.monthly_payment_cents = Some(45_000);
+        i.balance_cents = Some(1_800_000);
+        let a = create(&mut c, &i).unwrap();
+        assert_eq!((a.apr_bps, a.monthly_payment_cents), (Some(649), Some(45_000)));
+        assert!(!a.is_asset);
+
+        let mut bad = input("Car loan 2", "loan");
+        bad.apr_bps = Some(60_000);
+        assert!(create(&mut c, &bad).is_err());
+        bad.apr_bps = Some(-1);
+        assert!(create(&mut c, &bad).is_err());
+
+        let mut edit = input("Car loan", "loan");
+        edit.apr_bps = Some(500);
+        edit.monthly_payment_cents = Some(50_000);
+        let a = update(&c, a.id, &edit).unwrap();
+        assert_eq!((a.apr_bps, a.monthly_payment_cents), (Some(500), Some(50_000)));
     }
 
     #[test]

@@ -231,6 +231,11 @@ export function TransactionList({
                   <button className="selectable text-left hover:underline" onClick={() => setEditing(t)}>
                     {t.payee}
                   </button>
+                  {t.transferAccountName ? (
+                    <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                      → {t.transferAccountName}
+                    </span>
+                  ) : null}
                   {t.notes ? <div className="text-xs text-zinc-400">{t.notes}</div> : null}
                 </td>
                 {fixedAccountId === undefined ? <td className="px-3 py-2 text-zinc-500">{t.accountName}</td> : null}

@@ -4,7 +4,7 @@ import { centsToInput, parseMoney, todayISO } from "../lib/money";
 import type { Account, Category, Transaction } from "../lib/types";
 import { CategorySelect } from "./CategorySelect";
 import { Modal } from "./Modal";
-import { Select } from "./Select";
+import { Select, selectClass } from "./Select";
 import { Button, Field } from "./ui";
 
 export function TransactionForm({
@@ -35,6 +35,7 @@ export function TransactionForm({
   const [categoryId, setCategoryId] = useState<number | null>(transaction?.categoryId ?? null);
   const [categoryTouched, setCategoryTouched] = useState(editing);
   const [notes, setNotes] = useState(transaction?.notes ?? "");
+  const [transferTo, setTransferTo] = useState<number | null>(transaction?.transferAccountId ?? null);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -59,7 +60,15 @@ export function TransactionForm({
     const signed = direction === "out" ? -Math.abs(cents) : Math.abs(cents);
     setBusy(true);
     try {
-      const input = { accountId, postedOn, amountCents: signed, payee, categoryId, notes: notes || null };
+      const input = {
+        accountId,
+        postedOn,
+        amountCents: signed,
+        payee,
+        categoryId,
+        notes: notes || null,
+        transferAccountId: transferTo,
+      };
       if (editing) await api.updateTransaction(transaction.id, input);
       else await api.createTransaction(input);
       onSaved();
@@ -128,6 +137,31 @@ export function TransactionForm({
               setCategoryTouched(true);
             }}
           />
+        </div>
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300" htmlFor="tx-transfer">
+            Paid to another account (optional)
+          </label>
+          <select
+            id="tx-transfer"
+            className={selectClass}
+            value={transferTo ?? ""}
+            onChange={(e) => setTransferTo(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">Not a transfer</option>
+            {accounts
+              .filter((a) => a.id !== accountId)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+          </select>
+          <p className="text-xs text-zinc-500">
+            {transferTo
+              ? "Counted as moving money between your accounts, so it isn't spending. On a debt, it also counts toward the balance you owe."
+              : "Use this for a loan or credit card payment, or money moved to savings."}
+          </p>
         </div>
         <Field label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={1000} />
         {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}

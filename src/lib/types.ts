@@ -28,6 +28,9 @@ export interface Account {
   balanceCents: number | null;
   balanceAsOf: string | null;
   transactionCount: number;
+  /** Annual rate in basis points (6.49% = 649), for debts. */
+  aprBps: number | null;
+  monthlyPaymentCents: number | null;
 }
 
 export interface AccountInput {
@@ -38,6 +41,8 @@ export interface AccountInput {
   isAsset?: boolean | null;
   balanceCents?: number | null;
   balanceAsOf?: string | null;
+  aprBps?: number | null;
+  monthlyPaymentCents?: number | null;
 }
 
 export interface BalanceSnapshot {
@@ -75,6 +80,9 @@ export interface Transaction {
   notes: string | null;
   pending: boolean;
   source: "manual" | "csv" | "plaid" | string;
+  /** Set when the money went to another account you track. */
+  transferAccountId: number | null;
+  transferAccountName: string | null;
 }
 
 export interface TransactionInput {
@@ -84,6 +92,7 @@ export interface TransactionInput {
   payee: string;
   categoryId: number | null;
   notes: string | null;
+  transferAccountId?: number | null;
 }
 
 /** categoryId 0 = uncategorized */
@@ -179,6 +188,36 @@ export interface CategoryInput {
 // ---- Plaid
 
 export type PlaidEnvironment = "sandbox" | "production";
+
+export interface Payoff {
+  months: number;
+  payoffOn: string;
+  totalInterestCents: number;
+  totalPaidCents: number;
+  lastPaymentCents: number;
+}
+
+export type Projection =
+  | { state: "clear" }
+  | { state: "incomplete" }
+  | { state: "neverPaidOff"; monthlyInterestCents: number; minimumToMakeProgressCents: number }
+  | ({ state: "paid" } & Payoff);
+
+export interface PaymentsSince {
+  since: string | null;
+  count: number;
+  totalCents: number;
+}
+
+export interface DebtSummary {
+  account: Account;
+  aprBps: number | null;
+  monthlyPaymentCents: number | null;
+  payments: PaymentsSince;
+  estimatedInterestCents: number;
+  suggestedBalanceCents: number | null;
+  projection: Projection;
+}
 
 /** Which set of data a query covers. */
 export type Scope = "real" | "test" | "all";

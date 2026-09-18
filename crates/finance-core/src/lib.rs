@@ -7,6 +7,7 @@ pub mod accounts;
 pub mod categories;
 pub mod crypto;
 pub mod db;
+pub mod debt;
 pub mod error;
 pub mod import;
 pub mod money;

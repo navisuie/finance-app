@@ -28,6 +28,10 @@ pub struct Transaction {
     pub notes: Option<String>,
     pub pending: bool,
     pub source: String,
+    /// Set when this moved money to another account you track (a loan or card
+    /// payment, a transfer to savings) instead of being spent.
+    pub transfer_account_id: Option<i64>,
+    pub transfer_account_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -39,6 +43,8 @@ pub struct TransactionInput {
     pub payee: String,
     pub category_id: Option<i64>,
     pub notes: Option<String>,
+    /// The account this money went to, if it's a transfer.
+    pub transfer_account_id: Option<i64>,
 }
 
 /// `category_id = Some(0)` selects uncategorized transactions.
@@ -107,6 +113,16 @@ fn validate(conn: &Connection, input: &TransactionInput) -> Result<Clean> {
             return Err(CoreError::Invalid("Category not found.".into()));
         }
     }
+    if let Some(target) = input.transfer_account_id {
+        if target == input.account_id {
+            return Err(CoreError::Invalid("A transfer has to point at a different account.".into()));
+        }
+        let ok: bool =
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE id = ?1)", [target], |r| r.get(0))?;
+        if !ok {
+            return Err(CoreError::Invalid("That account no longer exists.".into()));
+        }
+    }
     Ok(Clean {
         posted_on: parse_date(&input.posted_on)?,
         payee: required_text("Payee", &input.payee, 200)?,
@@ -116,10 +132,12 @@ fn validate(conn: &Connection, input: &TransactionInput) -> Result<Clean> {
 
 const SELECT: &str = "
     SELECT t.id, t.account_id, a.name, t.posted_on, t.amount_cents, t.payee,
-           t.category_id, c.name, t.notes, t.pending, t.source
+           t.category_id, c.name, t.notes, t.pending, t.source,
+           t.transfer_account_id, ta.name
     FROM transactions t
     JOIN accounts a ON a.id = t.account_id
-    LEFT JOIN categories c ON c.id = t.category_id";
+    LEFT JOIN categories c ON c.id = t.category_id
+    LEFT JOIN accounts ta ON ta.id = t.transfer_account_id";
 
 fn map_row(r: &Row) -> rusqlite::Result<Transaction> {
     Ok(Transaction {
@@ -134,6 +152,8 @@ fn map_row(r: &Row) -> rusqlite::Result<Transaction> {
         notes: r.get(8)?,
         pending: r.get(9)?,
         source: r.get(10)?,
+        transfer_account_id: r.get(11)?,
+        transfer_account_name: r.get(12)?,
     })
 }
 
@@ -147,11 +167,11 @@ pub fn create(conn: &Connection, input: &TransactionInput) -> Result<Transaction
     let c = validate(conn, input)?;
     conn.execute(
         "INSERT INTO transactions (account_id, posted_on, amount_cents, payee, category_id, notes,
-                                   source, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'manual', ?7)",
+                                   transfer_account_id, source, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'manual', ?8)",
         params![
             input.account_id, c.posted_on, input.amount_cents, c.payee, input.category_id, c.notes,
-            now_rfc3339()
+            input.transfer_account_id, now_rfc3339()
         ],
     )?;
     get(conn, conn.last_insert_rowid())
@@ -161,8 +181,11 @@ pub fn update(conn: &Connection, id: i64, input: &TransactionInput) -> Result<Tr
     let c = validate(conn, input)?;
     let n = conn.execute(
         "UPDATE transactions SET account_id = ?1, posted_on = ?2, amount_cents = ?3, payee = ?4,
-                category_id = ?5, notes = ?6 WHERE id = ?7",
-        params![input.account_id, c.posted_on, input.amount_cents, c.payee, input.category_id, c.notes, id],
+                category_id = ?5, notes = ?6, transfer_account_id = ?7 WHERE id = ?8",
+        params![
+            input.account_id, c.posted_on, input.amount_cents, c.payee, input.category_id, c.notes,
+            input.transfer_account_id, id
+        ],
     )?;
     if n == 0 {
         return Err(CoreError::Invalid("Transaction not found.".into()));
@@ -281,7 +304,7 @@ pub fn summary(conn: &Connection, from: &str, to: &str, scope: Scope) -> Result<
          FROM transactions t
          JOIN accounts a ON a.id = t.account_id
          LEFT JOIN categories c ON c.id = t.category_id
-         WHERE t.posted_on BETWEEN ?1 AND ?2 AND {}",
+         WHERE t.posted_on BETWEEN ?1 AND ?2 AND t.transfer_account_id IS NULL AND {}",
             scope.sql()
         ),
         params![from, to],
@@ -332,6 +355,7 @@ pub(crate) mod tests {
             payee: payee.into(),
             category_id: None,
             notes: None,
+            transfer_account_id: None,
         }
     }
 
@@ -425,6 +449,43 @@ pub(crate) mod tests {
         assert_eq!(suggest_category(&c, "Unknown place").unwrap(), None);
         set_category(&mut c, &[t2.id], None).unwrap();
         assert_eq!(get(&c, t2.id).unwrap().category_id, None);
+    }
+
+    #[test]
+    fn linked_transfers_are_not_spending() {
+        let mut c = conn();
+        let a = accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let loan = accounts::create(&mut c, &input("Car loan", "loan")).unwrap();
+        let mut pay = tx(a.id, "2026-09-05", 300_000, "Payroll");
+        pay.category_id = Some(cat(&c, "Income"));
+        create(&c, &pay).unwrap();
+        let mut car = tx(a.id, "2026-09-06", -45_000, "Car payment");
+        car.transfer_account_id = Some(loan.id);
+        let car = create(&c, &car).unwrap();
+        assert_eq!(car.transfer_account_name.as_deref(), Some("Car loan"));
+        create(&c, &tx(a.id, "2026-09-07", -5_000, "Groceries")).unwrap();
+
+        let s = summary(&c, "2026-09-01", "2026-09-30", crate::accounts::Scope::Real).unwrap();
+        assert_eq!(s.income_cents, 300_000);
+        assert_eq!(s.spending_cents, 5_000, "the loan payment is a transfer, not spending");
+        // It still shows in the list, with the link.
+        let page = query(&c, &TransactionFilter::default()).unwrap();
+        assert_eq!(page.total, 3);
+
+        // A transfer must point somewhere else, and somewhere real.
+        let mut self_ref = tx(a.id, "2026-09-08", -100, "Nope");
+        self_ref.transfer_account_id = Some(a.id);
+        assert!(create(&c, &self_ref).is_err());
+        let mut missing = tx(a.id, "2026-09-08", -100, "Nope");
+        missing.transfer_account_id = Some(9_999);
+        assert!(create(&c, &missing).is_err());
+
+        // Unlinking puts it back in spending.
+        let mut edit = tx(a.id, "2026-09-06", -45_000, "Car payment");
+        edit.transfer_account_id = None;
+        update(&c, car.id, &edit).unwrap();
+        let s = summary(&c, "2026-09-01", "2026-09-30", crate::accounts::Scope::Real).unwrap();
+        assert_eq!(s.spending_cents, 50_000);
     }
 
     #[test]
