@@ -219,6 +219,59 @@ export interface DebtSummary {
   projection: Projection;
 }
 
+export interface NetWorthPoint {
+  month: string;
+  assetsCents: number;
+  liabilitiesCents: number;
+  netCents: number;
+  hasData: boolean;
+}
+
+export type BudgetState = "under" | "close" | "over";
+
+export interface BudgetRow {
+  categoryId: number;
+  categoryName: string;
+  limitCents: number | null;
+  spentCents: number;
+  remainingCents: number | null;
+  used: number | null;
+  state: BudgetState | null;
+  recentAverageCents: number;
+}
+
+export interface BudgetMonth {
+  month: string;
+  rows: BudgetRow[];
+  totalLimitCents: number;
+  totalSpentCents: number;
+  unbudgetedSpentCents: number;
+  incomeCents: number;
+}
+
+export interface Goal {
+  id: number;
+  name: string;
+  targetCents: number;
+  targetDate: string | null;
+  accountId: number | null;
+  accountName: string | null;
+  currentCents: number;
+  remainingCents: number;
+  progress: number;
+  reached: boolean;
+  monthsLeft: number | null;
+  monthlyNeededCents: number | null;
+  overdue: boolean;
+}
+
+export interface GoalInput {
+  name: string;
+  targetCents: number;
+  targetDate: string | null;
+  accountId: number | null;
+}
+
 /** Which set of data a query covers. */
 export type Scope = "real" | "test" | "all";
 

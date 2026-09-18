@@ -4,7 +4,11 @@
 
 use std::collections::HashMap;
 
-use finance_core::accounts::{self, Account, AccountInput, BalanceSnapshot, NetWorth, Scope, TestDataSummary};
+use finance_core::accounts::{
+    self, Account, AccountInput, BalanceSnapshot, NetWorth, NetWorthPoint, Scope, TestDataSummary,
+};
+use finance_core::budgets::{self, BudgetMonth};
+use finance_core::goals::{self, Goal, GoalInput};
 use finance_core::plaid::api::Environment;
 use finance_core::plaid::config;
 use finance_core::categories::{self, Category, CategoryInput};
@@ -112,6 +116,69 @@ pub fn debt_summary(state: State<'_, AppState>, account_id: i64) -> CmdResult<De
 pub fn net_worth(state: State<'_, AppState>) -> CmdResult<NetWorth> {
     let scope = active_scope(&state)?;
     Ok(state.with_session(|s| accounts::net_worth(s.conn(), scope))?)
+}
+
+/// Net worth at the end of each of the last `months` months.
+#[tauri::command]
+pub fn net_worth_history(state: State<'_, AppState>, months: u32) -> CmdResult<Vec<NetWorthPoint>> {
+    let scope = active_scope(&state)?;
+    let months = months.clamp(3, 60);
+    Ok(state.with_session(|s| accounts::net_worth_history(s.conn(), scope, months))?)
+}
+
+// ----------------------------------------------------------------- budgets
+
+#[tauri::command]
+pub fn budget_month(state: State<'_, AppState>, month: String) -> CmdResult<BudgetMonth> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| budgets::month_view(s.conn(), &month, scope))?)
+}
+
+/// Set a category's limit for a month; 0 removes it.
+#[tauri::command]
+pub fn set_budget(
+    state: State<'_, AppState>,
+    category_id: i64,
+    month: String,
+    limit_cents: i64,
+) -> CmdResult<BudgetMonth> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| {
+        budgets::set_limit(s.conn(), category_id, &month, limit_cents)?;
+        budgets::month_view(s.conn(), &month, scope)
+    })?)
+}
+
+#[tauri::command]
+pub fn copy_budgets(state: State<'_, AppState>, from: String, to: String) -> CmdResult<BudgetMonth> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| {
+        budgets::copy_month(s.conn_mut(), &from, &to)?;
+        budgets::month_view(s.conn(), &to, scope)
+    })?)
+}
+
+// ------------------------------------------------------------------- goals
+
+#[tauri::command]
+pub fn list_goals(state: State<'_, AppState>) -> CmdResult<Vec<Goal>> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| goals::list(s.conn(), scope))?)
+}
+
+#[tauri::command]
+pub fn create_goal(state: State<'_, AppState>, input: GoalInput) -> CmdResult<Goal> {
+    Ok(state.with_session(|s| goals::create(s.conn(), &input))?)
+}
+
+#[tauri::command]
+pub fn update_goal(state: State<'_, AppState>, id: i64, input: GoalInput) -> CmdResult<Goal> {
+    Ok(state.with_session(|s| goals::update(s.conn(), id, &input))?)
+}
+
+#[tauri::command]
+pub fn delete_goal(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    Ok(state.with_session(|s| goals::delete(s.conn(), id))?)
 }
 
 // -------------------------------------------------------------- categories

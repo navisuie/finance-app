@@ -352,6 +352,67 @@ pub fn net_worth(conn: &Connection, scope: Scope) -> Result<NetWorth> {
     Ok(nw)
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetWorthPoint {
+    /// `YYYY-MM`.
+    pub month: String,
+    pub assets_cents: i64,
+    pub liabilities_cents: i64,
+    pub net_cents: i64,
+    /// False until the first balance was recorded, so the chart can start there.
+    pub has_data: bool,
+}
+
+/// Net worth at the end of each of the last `months` months, from the latest
+/// balance recorded for each account on or before that date. Archived
+/// accounts count for the months they were open.
+pub fn net_worth_history(conn: &Connection, scope: Scope, months: u32) -> Result<Vec<NetWorthPoint>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT b.account_id, a.is_asset, b.as_of, b.amount_cents
+         FROM balances b JOIN accounts a ON a.id = b.account_id
+         WHERE {} ORDER BY b.as_of, b.id",
+        scope.sql()
+    ))?;
+    let rows: Vec<(i64, bool, String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+
+    let today = crate::util::today();
+    let this_month = crate::budgets::month_of(&today)?;
+    let mut out = Vec::new();
+    // Latest balance per account as we walk forward through time.
+    let mut latest: std::collections::HashMap<i64, (bool, i64)> = std::collections::HashMap::new();
+    let mut next = 0usize;
+    let start = -(months as i32) + 1;
+    for offset in start..=0 {
+        let month = crate::budgets::shift_month(&this_month, offset)?;
+        let (_, month_end) = crate::budgets::month_range(&month)?;
+        while next < rows.len() && rows[next].2 <= month_end {
+            let (account_id, is_asset, _, amount) = &rows[next];
+            latest.insert(*account_id, (*is_asset, *amount));
+            next += 1;
+        }
+        let mut assets = 0;
+        let mut liabilities = 0;
+        for (is_asset, amount) in latest.values() {
+            if *is_asset {
+                assets += amount;
+            } else {
+                liabilities += amount;
+            }
+        }
+        out.push(NetWorthPoint {
+            month,
+            assets_cents: assets,
+            liabilities_cents: liabilities,
+            net_cents: assets - liabilities,
+            has_data: !latest.is_empty(),
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -486,6 +547,35 @@ pub(crate) mod tests {
         assert_eq!(removed.accounts, 1);
         assert_eq!(list(&c, true, Scope::All).unwrap().len(), 1);
         assert_eq!(get(&c, real.id).unwrap().name, "Real checking");
+    }
+
+    #[test]
+    fn net_worth_history_walks_forward_from_snapshots() {
+        let mut c = conn();
+        let chk = create(&mut c, &input("Checking", "checking")).unwrap();
+        let card = create(&mut c, &input("Card", "credit_card")).unwrap();
+        let today = crate::util::today();
+        let this_month = crate::budgets::month_of(&today).unwrap();
+        let m = |back: i32| crate::budgets::shift_month(&this_month, back).unwrap();
+
+        set_balance(&c, chk.id, &format!("{}-05", m(-3)), 100_000).unwrap();
+        set_balance(&c, card.id, &format!("{}-06", m(-2)), 20_000).unwrap();
+        set_balance(&c, chk.id, &format!("{}-07", m(-1)), 150_000).unwrap();
+
+        let h = net_worth_history(&c, Scope::Real, 5).unwrap();
+        assert_eq!(h.len(), 5);
+        assert_eq!(h[0].month, m(-4));
+        assert!(!h[0].has_data, "nothing recorded yet");
+        assert_eq!(h[1].net_cents, 100_000);
+        assert_eq!(h[2].net_cents, 80_000, "the card counts against it");
+        assert_eq!(h[3].net_cents, 130_000, "a newer balance replaces the old one");
+        assert_eq!(h[4].net_cents, 130_000, "months with no change carry forward");
+        assert_eq!(h[4].assets_cents, 150_000);
+        assert_eq!(h[4].liabilities_cents, 20_000);
+
+        // An archived account still counts for the months it held money.
+        set_archived(&c, card.id, true).unwrap();
+        assert_eq!(net_worth_history(&c, Scope::Real, 5).unwrap()[4].liabilities_cents, 20_000);
     }
 
     #[test]

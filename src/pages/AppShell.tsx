@@ -5,6 +5,8 @@ import { Dashboard } from "./Dashboard";
 import { SettingsPage } from "./SettingsPage";
 import { Placeholder } from "./Placeholder";
 import { AccountsPage } from "./AccountsPage";
+import { BudgetsPage } from "./BudgetsPage";
+import { GoalsPage } from "./GoalsPage";
 import { TransactionsPage } from "./TransactionsPage";
 import { PrivacyContext } from "../components/privacy";
 import { EnvironmentSwitch } from "../components/EnvironmentSwitch";
@@ -167,12 +169,8 @@ export function AppShell({ onLock }: { onLock: () => void }) {
               <AccountsPage key={dataVersion} onOpenSettings={() => setSection("settings")} />
             )}
             {section === "transactions" && <TransactionsPage key={dataVersion} />}
-            {section === "budgets" && (
-              <Placeholder title="Budgets" phase={3} detail="Monthly limits per category with progress bars." />
-            )}
-            {section === "goals" && (
-              <Placeholder title="Goals" phase={3} detail="Savings targets like a house down payment or emergency fund." />
-            )}
+            {section === "budgets" && <BudgetsPage key={dataVersion} />}
+            {section === "goals" && <GoalsPage key={dataVersion} />}
             {section === "calculators" && (
               <Placeholder
                 title="Calculators"

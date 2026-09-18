@@ -5,7 +5,11 @@ import type {
   AccountInput,
   BalanceSnapshot,
   Category,
+  BudgetMonth,
   DebtSummary,
+  Goal,
+  GoalInput,
+  NetWorthPoint,
   CategoryInput,
   CsvMapping,
   Detection,
@@ -106,6 +110,19 @@ export const api = {
   balanceHistory: (accountId: number) => invoke<BalanceSnapshot[]>("balance_history", { accountId }),
   netWorth: () => invoke<NetWorth>("net_worth"),
   debtSummary: (accountId: number) => invoke<DebtSummary>("debt_summary", { accountId }),
+  netWorthHistory: (months = 13) => invoke<NetWorthPoint[]>("net_worth_history", { months }),
+
+  // Budgets
+  budgetMonth: (month: string) => invoke<BudgetMonth>("budget_month", { month }),
+  setBudget: (categoryId: number, month: string, limitCents: number) =>
+    invoke<BudgetMonth>("set_budget", { categoryId, month, limitCents }),
+  copyBudgets: (from: string, to: string) => invoke<BudgetMonth>("copy_budgets", { from, to }),
+
+  // Goals
+  listGoals: () => invoke<Goal[]>("list_goals"),
+  createGoal: (input: GoalInput) => invoke<Goal>("create_goal", { input }),
+  updateGoal: (id: number, input: GoalInput) => invoke<Goal>("update_goal", { id, input }),
+  deleteGoal: (id: number) => invoke<void>("delete_goal", { id }),
 
   // Categories
   listCategories: () => invoke<Category[]>("list_categories"),

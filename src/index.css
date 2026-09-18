@@ -12,6 +12,26 @@
 
 @custom-variant dark (@media (prefers-color-scheme: dark));
 
+/* Chart tokens. Light and dark are chosen separately and both validated
+   against their own surface, rather than one being a flip of the other. */
+:root {
+  --viz-surface: #ffffff;
+  --viz-line: #059669;
+  --viz-over: #d03b3b;
+  --viz-grid: #e4e4e7;
+  --viz-axis: #71717a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --viz-surface: #18181b;
+    --viz-line: #0da678;
+    --viz-over: #e5484d;
+    --viz-grid: #27272a;
+    --viz-axis: #a1a1aa;
+  }
+}
+
 html,
 body,
 #root {

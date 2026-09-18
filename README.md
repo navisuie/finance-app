@@ -2,13 +2,14 @@
 
 A personal finance tracker for macOS. Your data stays on your Mac in an encrypted database. There is no server and no account to sign up for.
 
-**Status: phases 1, 2 and 6 are done.**
+**Status: phases 1, 2, 3 and 6 are done.**
 
 - **Phase 1:** the vault, lock screen, auto-lock and recovery key.
 - **Phase 2:** accounts, balance history, net worth, transactions, categories and CSV import.
+- **Phase 3:** dashboard, budgets, goals and net worth over time.
 - **Phase 6:** live bank sync through Plaid.
 
-Budgets, goals, calculators, Touch ID and backups come next.
+Calculators, Touch ID and backups come next.
 
 ## Setup (one time)
 
@@ -62,6 +63,12 @@ Not every debt comes from a bank connection. Add a car loan, a personal loan or 
 * **Terms.** A debt account can hold its interest rate and your usual monthly payment. With both, its page shows when it will be paid off, how many payments are left, and the interest still to come. If the payment only covers the interest, it says so and tells you the amount that would start reducing the balance.
 * **Linking payments.** On the transaction that leaves your checking account, set **Paid to another account** to the loan. That payment then counts as moving money between your own accounts, not as spending, so it stays out of your spending total and savings rate. It works for credit card payments and transfers to savings too.
 * **Keeping the balance honest.** Linked payments never change the balance by themselves, because part of each payment is interest. The debt's page adds them up ("2 payments totalling $900 since your balance on Aug 1") and suggests a new balance, including an estimate of the interest since then. **Update balance** pre-fills that figure; change it to match your statement and save.
+
+## Budgets, goals and net worth
+
+* **Budgets.** One monthly limit per spending category. The arrows at the top move between months (you can't look past the current month). Each category shows what you've spent, what's left and a bar; it turns amber at 85% of the limit and red once you're over, with the words next to it so it doesn't rely on colour alone. Categories without a limit are listed too, with their average over the last three months and a **Use average** button that turns it into a limit. Click a limit to edit it, Enter or click away to save, Escape to cancel, and set it to 0 to remove it. **Copy last month's budgets** fills in a fresh month. Transfers and payments linked to another account are never counted as spending.
+* **Goals.** A goal has a name, a target amount and, optionally, a date and a linked account. Linked to an account, progress is that account's balance, so it keeps itself up to date; otherwise you set the amount saved yourself. With a date, the card shows what you'd need to put aside each month, or says how far past the date you are. Goals attached to a test account only appear in Sandbox.
+* **Net worth over time.** The dashboard charts the last twelve months from your balance history — every balance you record, whether by hand, by CSV or from a bank sync, adds a point. Hover for the month's figure, or open **Show the numbers** for the assets, debts and net worth behind each point. Closed accounts still count for the months they were open. The chart follows **Hide balances** and shows sandbox data in Sandbox.
 
 ## Connecting banks with Plaid
 
@@ -170,7 +177,7 @@ recovery key ────Argon2id──▶ KEK₂ ──AES-256-GCM unwrap──
 ## Project layout
 
 ```
-crates/finance-core/   Rust: vault, crypto, schema, accounts, transactions, CSV import, Plaid (unit-tested)
+crates/finance-core/   Rust: vault, crypto, schema, accounts, transactions, budgets, goals, debt maths, CSV import, Plaid (unit-tested)
 src-tauri/             Rust: Tauri shell, IPC commands, auto-lock timer
 src/                   React + TypeScript UI (Tailwind)
 ```
@@ -179,7 +186,7 @@ src/                   React + TypeScript UI (Tailwind)
 
 1. **Secure foundation** ✅
 2. **Accounts and transactions (manual and CSV import)** ✅
-3. Dashboard, budgets, goals
+3. **Dashboard, budgets, goals** ✅
 4. Calculators (retirement, Monte Carlo, savings goal, home affordability, rent vs buy, debt payoff)
 5. Touch ID unlock, encrypted backups, signed build
 6. **Live bank sync with Plaid** ✅
