@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { formatCents } from "../../lib/money";
 import type { RetirementInput } from "../../lib/types";
@@ -7,6 +7,7 @@ import { MoneyField, NumberField } from "./fields";
 import { LineChart } from "./LineChart";
 import { ScenarioBar } from "./ScenarioBar";
 import { useCalculation } from "./useCalculation";
+import { useRetirementBalance } from "./useRetirementBalance";
 
 export const RETIREMENT_DEFAULT: RetirementInput = {
   currentAge: 30,
@@ -21,11 +22,40 @@ export const RETIREMENT_DEFAULT: RetirementInput = {
 };
 
 export function RetirementFields<T extends RetirementInput>({ input, set }: { input: T; set: <K extends keyof RetirementInput>(key: K, value: RetirementInput[K]) => void }) {
+  const accountBalance = useRetirementBalance();
+  const autofilled = useRef(false);
+
+  // Pre-fill from real account balances once, the first time they're
+  // available — never overwrites an edit you've already made.
+  useEffect(() => {
+    if (autofilled.current || accountBalance.loading || accountBalance.count === 0) return;
+    autofilled.current = true;
+    set("balanceCents", accountBalance.totalCents);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountBalance.loading, accountBalance.count]);
+
   return (
     <div className="grid grid-cols-2 gap-3">
       <NumberField label="Current age" value={input.currentAge} onChange={(v) => set("currentAge", v)} min={16} max={100} />
       <NumberField label="Retirement age" value={input.retirementAge} onChange={(v) => set("retirementAge", v)} min={16} max={100} />
-      <MoneyField label="Current balance (401k + Roth + brokerage)" cents={input.balanceCents} onChange={(v) => set("balanceCents", v)} />
+      <MoneyField
+        label="Current balance (401k + Roth + brokerage + HYSA)"
+        cents={input.balanceCents}
+        onChange={(v) => set("balanceCents", v)}
+        hint={
+          accountBalance.count > 0 ? (
+            <span>
+              {accountBalance.count} account{accountBalance.count === 1 ? "" : "s"} ({accountBalance.label}) total{" "}
+              {formatCents(accountBalance.totalCents)}.{" "}
+              <button type="button" className="hover:underline" onClick={() => set("balanceCents", accountBalance.totalCents)}>
+                Use this
+              </button>
+            </span>
+          ) : (
+            "No 401(k), Roth IRA, brokerage or HYSA accounts yet — add one on the Accounts page to pull this in automatically."
+          )
+        }
+      />
       <MoneyField label="Your monthly contribution" cents={input.monthlyContributionCents} onChange={(v) => set("monthlyContributionCents", v)} />
       <NumberField label="Employer match (%)" value={input.employerMatchPct} onChange={(v) => set("employerMatchPct", v)} step={5} min={0} max={200} hint="Applied on top of your contribution." />
       <NumberField label="Expected return (%/yr)" value={input.expectedReturnPct} onChange={(v) => set("expectedReturnPct", v)} step={0.5} />
