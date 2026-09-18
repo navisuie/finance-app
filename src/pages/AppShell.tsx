@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { Button, Logo } from "../components/ui";
 import { Dashboard } from "./Dashboard";
 import { SettingsPage } from "./SettingsPage";
-import { Placeholder } from "./Placeholder";
+import { CalculatorsPage } from "./CalculatorsPage";
 import { AccountsPage } from "./AccountsPage";
 import { BudgetsPage } from "./BudgetsPage";
 import { GoalsPage } from "./GoalsPage";
@@ -171,13 +171,7 @@ export function AppShell({ onLock }: { onLock: () => void }) {
             {section === "transactions" && <TransactionsPage key={dataVersion} />}
             {section === "budgets" && <BudgetsPage key={dataVersion} />}
             {section === "goals" && <GoalsPage key={dataVersion} />}
-            {section === "calculators" && (
-              <Placeholder
-                title="Calculators"
-                phase={4}
-                detail="Retirement, Monte Carlo, savings goal, home affordability, rent vs buy, and debt payoff."
-              />
-            )}
+            {section === "calculators" && <CalculatorsPage key={dataVersion} />}
           </PrivacyContext.Provider>
         </div>
       </main>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ImportWizard } from "../components/ImportWizard";
 import { TransactionList } from "../components/TransactionList";
+import { TransferCandidates } from "../components/TransferCandidates";
 import { Button } from "../components/ui";
 import { useAsync } from "../hooks/useAsync";
 import { api } from "../lib/api";
@@ -28,6 +29,7 @@ export function TransactionsPage() {
             : "Add an account on the Accounts page to start recording transactions."}
         </p>
       ) : null}
+      <TransferCandidates onChanged={() => setRefreshKey((k) => k + 1)} />
       {accounts.data && categories.data ? (
         <TransactionList
           accounts={accounts.data}

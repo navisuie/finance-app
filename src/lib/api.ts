@@ -33,6 +33,20 @@ import type {
   SyncResult,
   Scope,
   TestDataSummary,
+  TransferCandidate,
+  RetirementInput,
+  RetirementResult,
+  MonteCarloInput,
+  MonteCarloResult,
+  SavingsGoalInput,
+  SavingsGoalResult,
+  HomeAffordabilityInput,
+  HomeAffordabilityResult,
+  RentVsBuyInput,
+  RentVsBuyResult,
+  DebtPayoffInput,
+  DebtPayoffResult,
+  Scenario,
 } from "./types";
 
 /** Error shape returned by every Rust command. */
@@ -140,6 +154,10 @@ export const api = {
     invoke<number>("set_transactions_category", { ids, categoryId }),
   suggestCategory: (payee: string) => invoke<number | null>("suggest_category", { payee }),
   periodSummary: (from: string, to: string) => invoke<PeriodSummary>("period_summary", { from, to }),
+  listTransferCandidates: () => invoke<TransferCandidate[]>("list_transfer_candidates"),
+  confirmTransferLink: (aId: number, bId: number) => invoke<void>("confirm_transfer_link", { aId, bId }),
+  dismissTransferCandidate: (aId: number, bId: number) => invoke<void>("dismiss_transfer_candidate", { aId, bId }),
+  unlinkTransfer: (id: number) => invoke<void>("unlink_transfer", { id }),
 
   // CSV import
   importDetect: (accountId: number, text: string) => invoke<Detection>("import_detect", { accountId, text }),
@@ -183,6 +201,20 @@ export const api = {
   plaidRemoveItem: (itemId: number, force: boolean) => invoke<void>("plaid_remove_item", { itemId, force }),
   plaidSandboxAddItem: (kind: "banking" | "investments") => invoke<LinkPoll>("plaid_sandbox_add_item", { kind }),
   listHoldings: (accountId: number) => invoke<HoldingView[]>("list_holdings", { accountId }),
+
+  // Calculators
+  calcRetirement: (input: RetirementInput) => invoke<RetirementResult>("calc_retirement", { input }),
+  calcRetirementMonteCarlo: (input: MonteCarloInput) =>
+    invoke<MonteCarloResult>("calc_retirement_monte_carlo", { input }),
+  calcSavingsGoal: (input: SavingsGoalInput) => invoke<SavingsGoalResult>("calc_savings_goal", { input }),
+  calcHomeAffordability: (input: HomeAffordabilityInput) =>
+    invoke<HomeAffordabilityResult>("calc_home_affordability", { input }),
+  calcRentVsBuy: (input: RentVsBuyInput) => invoke<RentVsBuyResult>("calc_rent_vs_buy", { input }),
+  calcDebtPayoff: (input: DebtPayoffInput) => invoke<DebtPayoffResult>("calc_debt_payoff", { input }),
+  listScenarios: (calculator: string) => invoke<Scenario[]>("list_scenarios", { calculator }),
+  saveScenario: (calculator: string, name: string, inputs: unknown) =>
+    invoke<Scenario>("save_scenario", { calculator, name, inputs }),
+  deleteScenario: (id: number) => invoke<void>("delete_scenario", { id }),
 };
 
 export function onVaultLocked(cb: (reason: string) => void): Promise<UnlistenFn> {

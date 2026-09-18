@@ -40,7 +40,7 @@ pub enum Projection {
 }
 
 /// Interest for one month on `balance_cents` at `apr_bps` (basis points).
-fn monthly_interest(balance_cents: i64, apr_bps: i64) -> i64 {
+pub(crate) fn monthly_interest(balance_cents: i64, apr_bps: i64) -> i64 {
     if balance_cents <= 0 || apr_bps <= 0 {
         return 0;
     }
@@ -49,7 +49,7 @@ fn monthly_interest(balance_cents: i64, apr_bps: i64) -> i64 {
     ((numerator + 60_000) / 120_000) as i64
 }
 
-fn add_months(date: NaiveDate, months: u32) -> NaiveDate {
+pub(crate) fn add_months(date: NaiveDate, months: u32) -> NaiveDate {
     date.checked_add_months(chrono::Months::new(months)).unwrap_or(date)
 }
 
@@ -182,7 +182,7 @@ pub fn summary(conn: &Connection, account_id: i64) -> Result<DebtSummary> {
     let projection = project(
         balance,
         apr_bps,
-        monthly_payment_cents.or(Some(payments.total_cents).filter(|_| payments.count == 1)),
+        monthly_payment_cents.or((payments.count == 1).then_some(payments.total_cents)),
         NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap_or_default(),
     );
 

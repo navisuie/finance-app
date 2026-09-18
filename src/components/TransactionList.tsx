@@ -117,6 +117,15 @@ export function TransactionList({
     }
   };
 
+  const unlinkOne = async (t: Transaction) => {
+    try {
+      await api.unlinkTransfer(t.id);
+      changed();
+    } catch (e) {
+      setMessage(errorMessage(e));
+    }
+  };
+
   const openAccounts = accounts.filter((a) => !a.archived);
 
   return (
@@ -231,7 +240,15 @@ export function TransactionList({
                   <button className="selectable text-left hover:underline" onClick={() => setEditing(t)}>
                     {t.payee}
                   </button>
-                  {t.transferAccountName ? (
+                  {t.transferAccountName && t.linkedTransactionId ? (
+                    <button
+                      className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                      title="Linked as a transfer — click to unlink"
+                      onClick={() => unlinkOne(t)}
+                    >
+                      → {t.transferAccountName} ✕
+                    </button>
+                  ) : t.transferAccountName ? (
                     <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                       → {t.transferAccountName}
                     </span>

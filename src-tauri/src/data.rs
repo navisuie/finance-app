@@ -17,6 +17,7 @@ use finance_core::import::{self, CsvMapping, Detection, ImportProfile, ImportRes
 use finance_core::transactions::{
     self, PeriodSummary, Transaction, TransactionFilter, TransactionInput, TransactionPage,
 };
+use finance_core::transfers::{self, TransferCandidate};
 use tauri::{AppHandle, State};
 
 use crate::commands::{blocking, CmdResult};
@@ -253,6 +254,29 @@ pub fn suggest_category(state: State<'_, AppState>, payee: String) -> CmdResult<
 pub fn period_summary(state: State<'_, AppState>, from: String, to: String) -> CmdResult<PeriodSummary> {
     let scope = active_scope(&state)?;
     Ok(state.with_session(|s| transactions::summary(s.conn(), &from, &to, scope))?)
+}
+
+// -------------------------------------------------------------- transfers
+
+#[tauri::command]
+pub fn list_transfer_candidates(state: State<'_, AppState>) -> CmdResult<Vec<TransferCandidate>> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| transfers::find_candidates(s.conn(), scope))?)
+}
+
+#[tauri::command]
+pub fn confirm_transfer_link(state: State<'_, AppState>, a_id: i64, b_id: i64) -> CmdResult<()> {
+    Ok(state.with_session(|s| transfers::confirm_link(s.conn_mut(), a_id, b_id))?)
+}
+
+#[tauri::command]
+pub fn dismiss_transfer_candidate(state: State<'_, AppState>, a_id: i64, b_id: i64) -> CmdResult<()> {
+    Ok(state.with_session(|s| transfers::dismiss_candidate(s.conn(), a_id, b_id))?)
+}
+
+#[tauri::command]
+pub fn unlink_transfer(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    Ok(state.with_session(|s| transfers::unlink(s.conn_mut(), id))?)
 }
 
 // ------------------------------------------------------------------ import

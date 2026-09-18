@@ -20,6 +20,7 @@ export function Dashboard({
   const month = useAsync(() => api.periodSummary(from, to), [from, to]);
   const recent = useAsync(() => api.queryTransactions({ limit: 10 }), []);
   const uncategorized = useAsync(() => api.queryTransactions({ categoryId: 0, limit: 1 }), []);
+  const transfers = useAsync(() => api.listTransferCandidates(), []);
   const history = useAsync(() => api.netWorthHistory(13), []);
   const budgets = useAsync(() => api.budgetMonth(from.slice(0, 7)), [from]);
   const goals = useAsync(() => api.listGoals(), []);
@@ -88,7 +89,16 @@ export function Dashboard({
                 </button>
               </li>
             ) : null}
-            {uncategorized.data?.total === 0 && stale.length === 0 ? <li className="text-zinc-500">All caught up.</li> : null}
+            {transfers.data && transfers.data.length > 0 ? (
+              <li>
+                <button className="text-left hover:underline" onClick={() => onNavigate("transactions")}>
+                  {transfers.data.length} possible transfer{transfers.data.length === 1 ? "" : "s"} to review
+                </button>
+              </li>
+            ) : null}
+            {uncategorized.data?.total === 0 && stale.length === 0 && (transfers.data?.length ?? 0) === 0 ? (
+              <li className="text-zinc-500">All caught up.</li>
+            ) : null}
           </ul>
         </Card>
       </div>

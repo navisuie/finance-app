@@ -32,6 +32,9 @@ pub struct Transaction {
     /// payment, a transfer to savings) instead of being spent.
     pub transfer_account_id: Option<i64>,
     pub transfer_account_name: Option<String>,
+    /// Set once this transaction is confirmed as one leg of a transfer;
+    /// points at the other leg. See `crate::transfers`.
+    pub linked_transaction_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,7 +136,7 @@ fn validate(conn: &Connection, input: &TransactionInput) -> Result<Clean> {
 const SELECT: &str = "
     SELECT t.id, t.account_id, a.name, t.posted_on, t.amount_cents, t.payee,
            t.category_id, c.name, t.notes, t.pending, t.source,
-           t.transfer_account_id, ta.name
+           t.transfer_account_id, ta.name, t.linked_transaction_id
     FROM transactions t
     JOIN accounts a ON a.id = t.account_id
     LEFT JOIN categories c ON c.id = t.category_id
@@ -154,6 +157,7 @@ fn map_row(r: &Row) -> rusqlite::Result<Transaction> {
         source: r.get(10)?,
         transfer_account_id: r.get(11)?,
         transfer_account_name: r.get(12)?,
+        linked_transaction_id: r.get(13)?,
     })
 }
 

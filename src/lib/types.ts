@@ -83,6 +83,13 @@ export interface Transaction {
   /** Set when the money went to another account you track. */
   transferAccountId: number | null;
   transferAccountName: string | null;
+  /** Set once this is confirmed as one leg of an auto-matched transfer. */
+  linkedTransactionId: number | null;
+}
+
+export interface TransferCandidate {
+  a: Transaction;
+  b: Transaction;
 }
 
 export interface TransactionInput {
@@ -364,4 +371,140 @@ export interface HoldingView {
   valueCents: number;
   costBasisCents: number | null;
   asOf: string;
+}
+
+// ---------------------------------------------------------------- calculators
+
+export interface RetirementInput {
+  currentAge: number;
+  retirementAge: number;
+  balanceCents: number;
+  monthlyContributionCents: number;
+  employerMatchPct: number;
+  expectedReturnPct: number;
+  inflationPct: number;
+  desiredAnnualIncomeCents: number;
+  withdrawalRatePct: number;
+}
+
+export interface RetirementResult {
+  monthsToRetirement: number;
+  combinedMonthlyContributionCents: number;
+  projectedBalanceCents: number;
+  sustainableAnnualIncomeCents: number;
+  gapCents: number;
+  requiredMonthlySavingsCents: number;
+  balanceByYearCents: number[];
+}
+
+export interface MonteCarloInput extends RetirementInput {
+  returnVolatilityPct: number;
+}
+
+export interface MonteCarloResult {
+  successProbabilityPct: number;
+  p10ByYearCents: number[];
+  p50ByYearCents: number[];
+  p90ByYearCents: number[];
+}
+
+export interface SavingsGoalInput {
+  targetCents: number;
+  targetDate: string;
+  currentSavingsCents: number;
+  hysaApyPct: number;
+  currentMonthlyDepositCents: number;
+}
+
+export interface SavingsGoalResult {
+  monthsToTargetDate: number;
+  requiredMonthlyDepositCents: number;
+  projectedCompletionDate: string | null;
+  alreadyReached: boolean;
+}
+
+export interface HomeAffordabilityInput {
+  grossAnnualIncomeCents: number;
+  monthlyDebtsCents: number;
+  downPaymentCents: number;
+  mortgageRatePct: number;
+  termYears: number;
+  propertyTaxPct: number;
+  monthlyInsuranceCents: number;
+  monthlyHoaCents: number;
+}
+
+export interface PaymentBreakdown {
+  principalInterestCents: number;
+  taxCents: number;
+  insuranceCents: number;
+  hoaCents: number;
+  pmiCents: number;
+  totalCents: number;
+}
+
+export interface HomeAffordabilityResult {
+  maxHomePriceCents: number;
+  maxLoanCents: number;
+  monthlyPayment: PaymentBreakdown;
+  downPaymentPct: number;
+}
+
+export interface RentVsBuyInput {
+  monthlyRentCents: number;
+  annualRentGrowthPct: number;
+  homePriceCents: number;
+  downPaymentCents: number;
+  mortgageRatePct: number;
+  termYears: number;
+  maintenancePct: number;
+  annualAppreciationPct: number;
+  yearsStaying: number;
+  investmentReturnPct: number;
+}
+
+export interface YearlyWealth {
+  year: number;
+  rentNetWorthCents: number;
+  buyNetWorthCents: number;
+}
+
+export interface RentVsBuyResult {
+  byYear: YearlyWealth[];
+  breakEvenYear: number | null;
+}
+
+export interface DebtInput {
+  name: string;
+  balanceCents: number;
+  aprBps: number;
+  minimumPaymentCents: number;
+}
+
+export interface DebtPayoffInput {
+  debts: DebtInput[];
+  extraMonthlyCents: number;
+}
+
+export interface StrategyResult {
+  months: number;
+  payoffOn: string;
+  totalInterestCents: number;
+  totalPaidCents: number;
+  order: string[];
+}
+
+export interface DebtPayoffResult {
+  avalanche: StrategyResult;
+  snowball: StrategyResult;
+}
+
+export type CalculatorId = "retirement" | "monte_carlo" | "savings_goal" | "home" | "rent_vs_buy" | "debt_payoff";
+
+export interface Scenario {
+  id: number;
+  calculator: string;
+  name: string;
+  inputs: unknown;
+  createdAt: string;
 }

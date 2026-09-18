@@ -171,6 +171,16 @@ const MIGRATIONS: &[&str] = &[
         REFERENCES accounts(id) ON DELETE SET NULL;
     CREATE INDEX idx_tx_transfer ON transactions(transfer_account_id);
     "#,
+    // v5: auto-detected matching between the two legs of a transfer.
+    r#"
+    -- Points at the other transaction that makes up this transfer, once confirmed.
+    ALTER TABLE transactions ADD COLUMN linked_transaction_id INTEGER
+        REFERENCES transactions(id) ON DELETE SET NULL;
+    -- Set when the user says a suggested pair isn't actually a transfer, so it
+    -- doesn't keep coming back as a candidate.
+    ALTER TABLE transactions ADD COLUMN transfer_dismissed INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX idx_tx_linked ON transactions(linked_transaction_id);
+    "#,
 ];
 
 pub fn schema_version(conn: &Connection) -> Result<i64> {

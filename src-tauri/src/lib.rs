@@ -1,4 +1,5 @@
 mod bank;
+mod calculators;
 mod commands;
 mod data;
 mod state;
@@ -84,6 +85,10 @@ pub fn run() {
             data::set_transactions_category,
             data::suggest_category,
             data::period_summary,
+            data::list_transfer_candidates,
+            data::confirm_transfer_link,
+            data::dismiss_transfer_candidate,
+            data::unlink_transfer,
             data::import_detect,
             data::import_preview,
             data::import_commit,
@@ -107,6 +112,15 @@ pub fn run() {
             bank::plaid_remove_item,
             bank::plaid_sandbox_add_item,
             bank::list_holdings,
+            calculators::calc_retirement,
+            calculators::calc_retirement_monte_carlo,
+            calculators::calc_savings_goal,
+            calculators::calc_home_affordability,
+            calculators::calc_rent_vs_buy,
+            calculators::calc_debt_payoff,
+            calculators::list_scenarios,
+            calculators::save_scenario,
+            calculators::delete_scenario,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the finance app");

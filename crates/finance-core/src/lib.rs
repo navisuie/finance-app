@@ -5,6 +5,7 @@
 
 pub mod accounts;
 pub mod budgets;
+pub mod calculators;
 pub mod categories;
 pub mod crypto;
 pub mod db;
@@ -16,9 +17,11 @@ pub mod money;
 pub mod password;
 pub mod plaid;
 pub mod recovery;
+pub mod scenarios;
 pub mod settings;
 pub mod throttle;
 pub mod transactions;
+pub mod transfers;
 pub mod util;
 pub mod vault;
 
