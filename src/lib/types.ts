@@ -216,11 +216,23 @@ export interface PaymentsSince {
   totalCents: number;
 }
 
+export interface LinkedPayment {
+  id: number;
+  postedOn: string;
+  /** Positive: what the payment was worth. */
+  amountCents: number;
+  payee: string;
+  fromAccountId: number;
+  fromAccountName: string;
+}
+
 export interface DebtSummary {
   account: Account;
   aprBps: number | null;
   monthlyPaymentCents: number | null;
   payments: PaymentsSince;
+  /** Payments tagged as paying this debt, newest first. */
+  recentPayments: LinkedPayment[];
   estimatedInterestCents: number;
   suggestedBalanceCents: number | null;
   projection: Projection;
@@ -254,6 +266,38 @@ export interface BudgetMonth {
   totalSpentCents: number;
   unbudgetedSpentCents: number;
   incomeCents: number;
+}
+
+export interface FixedPayment {
+  accountId: number;
+  accountName: string;
+  monthlyPaymentCents: number;
+}
+
+export interface PlanLine {
+  categoryId: number;
+  categoryName: string;
+  suggestedCents: number;
+  recentAverageCents: number;
+  currentLimitCents: number | null;
+}
+
+/** A suggested budget derived from the months before it. */
+export interface BudgetDraft {
+  month: string;
+  monthsOfData: number;
+  monthlyIncomeCents: number;
+  savingInvestingCents: number;
+  debtPayments: FixedPayment[];
+  debtPaymentsCents: number;
+  lines: PlanLine[];
+  suggestedTotalCents: number;
+  leftoverCents: number;
+}
+
+export interface LimitInput {
+  categoryId: number;
+  limitCents: number;
 }
 
 export interface Goal {
@@ -499,7 +543,58 @@ export interface DebtPayoffResult {
   snowball: StrategyResult;
 }
 
-export type CalculatorId = "retirement" | "monte_carlo" | "savings_goal" | "home" | "rent_vs_buy" | "debt_payoff";
+export type Bucket = "needs" | "wants" | "savings";
+
+export interface FixedExpense {
+  label: string;
+  monthlyCents: number;
+  bucket: Bucket;
+  /** The suggested category this replaces, if any. */
+  covers: string | null;
+}
+
+export interface BudgetPlanInput {
+  grossAnnualIncomeCents: number;
+  taxRatePct: number;
+  fixedExpenses: FixedExpense[];
+  needsPct: number;
+  wantsPct: number;
+  savingsPct: number;
+}
+
+export interface BucketSummary {
+  bucket: Bucket;
+  targetCents: number;
+  fixedCents: number;
+  remainingCents: number;
+}
+
+export interface BudgetPlanLine {
+  bucket: Bucket;
+  label: string;
+  monthlyCents: number;
+  source: "fixed" | "suggested";
+  /** The spending category this line would be budgeted under, if any. */
+  category: string | null;
+}
+
+export interface BudgetPlanResult {
+  monthlyTakeHomeCents: number;
+  buckets: BucketSummary[];
+  lines: BudgetPlanLine[];
+  totalPlannedCents: number;
+  unallocatedCents: number;
+  overAllocated: boolean;
+}
+
+export type CalculatorId =
+  | "retirement"
+  | "monte_carlo"
+  | "savings_goal"
+  | "home"
+  | "rent_vs_buy"
+  | "debt_payoff"
+  | "budget_plan";
 
 export interface Scenario {
   id: number;

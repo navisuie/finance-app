@@ -433,6 +433,9 @@ fn valid_date(d: &str) -> Option<String> {
 pub fn apply_sync(conn: &mut Connection, item_db_id: i64, pages: &[SyncPage]) -> Result<SyncCounts> {
     let linked = linked_accounts(conn, item_db_id)?;
     let learned = payee_category_map(conn)?;
+    // Recurring payments to accounts you track (a car loan, a card) keep the
+    // tag you gave them the first time.
+    let learned_transfers = crate::transactions::payee_transfer_map(conn)?;
     let cat_ids: HashMap<String, i64> =
         categories::list(conn)?.into_iter().map(|c| (c.name.to_lowercase(), c.id)).collect();
     let now = now_rfc3339();
@@ -443,10 +446,13 @@ pub fn apply_sync(conn: &mut Connection, item_db_id: i64, pages: &[SyncPage]) ->
         let mut find_cat = tx.prepare(
             "SELECT category_id FROM transactions WHERE plaid_transaction_id = ?1",
         )?;
+        // `transfer_account_id` is only set on insert: a re-sync must never
+        // undo a tag the user set, or re-apply one they removed.
         let mut upsert = tx.prepare(
             "INSERT INTO transactions (account_id, posted_on, amount_cents, payee, category_id, pending,
-                                       source, plaid_transaction_id, plaid_category, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'plaid', ?7, ?8, ?9)
+                                       source, plaid_transaction_id, plaid_category, created_at,
+                                       transfer_account_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'plaid', ?7, ?8, ?9, ?10)
              ON CONFLICT(plaid_transaction_id) DO UPDATE SET
                 account_id = excluded.account_id, posted_on = excluded.posted_on,
                 amount_cents = excluded.amount_cents, payee = excluded.payee,
@@ -484,8 +490,14 @@ pub fn apply_sync(conn: &mut Connection, item_db_id: i64, pages: &[SyncPage]) ->
                             .and_then(|name| cat_ids.get(&name.to_lowercase()).copied())
                     });
                 let detailed = pfc.map(|c| c.detailed.clone().unwrap_or_else(|| c.primary.clone()));
+                // Money out only, and never pointing at its own account.
+                let transfer_to = (cents < 0)
+                    .then(|| learned_transfers.get(&(*account_id, normalize_payee(&payee))).copied())
+                    .flatten()
+                    .filter(|target| target != account_id);
                 upsert.execute(params![
-                    account_id, date, cents, payee, category, t.pending, t.transaction_id, detailed, now
+                    account_id, date, cents, payee, category, t.pending, t.transaction_id, detailed, now,
+                    transfer_to
                 ])?;
                 if is_new { counts.added += 1 } else { counts.modified += 1 }
             }

@@ -4,6 +4,7 @@
 //! these commands don't touch `AppState` at all — no session, no lock check.
 //! Only scenario save/list/delete need the vault.
 
+use finance_core::calculators::budget_plan::{self, BudgetPlanInput, BudgetPlanResult};
 use finance_core::calculators::debt_payoff::{self, DebtPayoffInput, DebtPayoffResult};
 use finance_core::calculators::home::{self, HomeAffordabilityInput, HomeAffordabilityResult};
 use finance_core::calculators::rent_vs_buy::{self, RentVsBuyInput, RentVsBuyResult};
@@ -44,6 +45,11 @@ pub fn calc_rent_vs_buy(input: RentVsBuyInput) -> CmdResult<RentVsBuyResult> {
 #[tauri::command]
 pub fn calc_debt_payoff(input: DebtPayoffInput) -> CmdResult<DebtPayoffResult> {
     Ok(debt_payoff::project(&input)?)
+}
+
+#[tauri::command]
+pub fn calc_budget_plan(input: BudgetPlanInput) -> CmdResult<BudgetPlanResult> {
+    Ok(budget_plan::project(&input)?)
 }
 
 #[tauri::command]

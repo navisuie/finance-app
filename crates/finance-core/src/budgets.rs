@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use chrono::{Datelike, NaiveDate};
 use rusqlite::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::accounts::Scope;
 use crate::categories;
@@ -236,6 +236,203 @@ pub fn set_limit(conn: &Connection, category_id: i64, month: &str, limit_cents: 
     Ok(())
 }
 
+// ------------------------------------------------------- building a budget
+
+/// Money moved into one of these account kinds counts as saving or
+/// investing rather than spending.
+const SAVING_KINDS: &[&str] = &["savings", "hysa", "brokerage", "401k", "roth_ira", "traditional_ira", "hsa"];
+
+/// How many months back the draft looks.
+const LOOKBACK_MONTHS: i32 = 3;
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FixedPayment {
+    pub account_id: i64,
+    pub account_name: String,
+    pub monthly_payment_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanLine {
+    pub category_id: i64,
+    pub category_name: String,
+    /// What to budget: the recent average, rounded up.
+    pub suggested_cents: i64,
+    pub recent_average_cents: i64,
+    /// What's already set for this month, if anything.
+    pub current_limit_cents: Option<i64>,
+}
+
+/// A starting point for a month's budget, derived from what actually
+/// happened in the months before it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetDraft {
+    pub month: String,
+    /// Prior months that had any activity, out of `LOOKBACK_MONTHS`.
+    pub months_of_data: u32,
+    /// Average monthly income across the months that had any.
+    pub monthly_income_cents: i64,
+    /// Average monthly amount tagged as moved into savings or investments.
+    pub saving_investing_cents: i64,
+    /// Usual payments on debts you track, taken from the accounts themselves.
+    pub debt_payments: Vec<FixedPayment>,
+    pub debt_payments_cents: i64,
+    pub lines: Vec<PlanLine>,
+    pub suggested_total_cents: i64,
+    /// Income minus savings, debt payments and the suggested limits.
+    /// Negative means the plan spends more than comes in.
+    pub leftover_cents: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LimitInput {
+    pub category_id: i64,
+    pub limit_cents: i64,
+}
+
+/// Round up to the nearest $5 once the amount is worth rounding, so limits
+/// read like decisions rather than averages.
+fn round_up(cents: i64) -> i64 {
+    let step = if cents >= 2_000 { 500 } else { 100 };
+    (cents + step - 1) / step * step
+}
+
+/// Money tagged as moving into a savings or investment account in one month.
+fn saved_in(conn: &Connection, month: &str, scope: Scope) -> Result<i64> {
+    let (from, to) = month_range(month)?;
+    let kinds = SAVING_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
+    Ok(conn.query_row(
+        &format!(
+            "SELECT coalesce(sum(-t.amount_cents), 0)
+             FROM transactions t
+             JOIN accounts a ON a.id = t.account_id
+             JOIN accounts target ON target.id = t.transfer_account_id
+             WHERE t.posted_on BETWEEN ?1 AND ?2 AND t.amount_cents < 0
+               AND target.kind IN ({kinds}) AND {}",
+            scope.sql()
+        ),
+        params![from, to],
+        |r| r.get(0),
+    )?)
+}
+
+/// Whether a month had any transactions at all, so empty months don't drag
+/// the averages down.
+fn has_activity(conn: &Connection, month: &str, scope: Scope) -> Result<bool> {
+    let (from, to) = month_range(month)?;
+    Ok(conn.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM transactions t JOIN accounts a ON a.id = t.account_id
+                           WHERE t.posted_on BETWEEN ?1 AND ?2 AND {})",
+            scope.sql()
+        ),
+        params![from, to],
+        |r| r.get(0),
+    )?)
+}
+
+/// Usual payments on debts you track, from `accounts.monthly_payment_cents`.
+fn debt_payments(conn: &Connection, scope: Scope) -> Result<Vec<FixedPayment>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT a.id, a.name, a.monthly_payment_cents FROM accounts a
+         WHERE a.archived = 0 AND a.is_asset = 0 AND coalesce(a.monthly_payment_cents, 0) > 0 AND {}
+         ORDER BY a.monthly_payment_cents DESC",
+        scope.sql()
+    ))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(FixedPayment { account_id: r.get(0)?, account_name: r.get(1)?, monthly_payment_cents: r.get(2)? })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Build a suggested budget for `month` from the previous months: income and
+/// saving derived from the accounts, per-category limits from what was
+/// actually spent, debt payments read off the debt accounts.
+pub fn draft(conn: &Connection, month: &str, scope: Scope) -> Result<BudgetDraft> {
+    let month = parse_month(month)?;
+
+    let mut income_total = 0;
+    let mut income_months = 0;
+    let mut saved_total = 0;
+    let mut months_of_data = 0;
+    for back in 1..=LOOKBACK_MONTHS {
+        let m = shift_month(&month, -back)?;
+        if !has_activity(conn, &m, scope)? {
+            continue;
+        }
+        months_of_data += 1;
+        saved_total += saved_in(conn, &m, scope)?;
+        let income = income_for(conn, &m, scope)?;
+        if income > 0 {
+            income_total += income;
+            income_months += 1;
+        }
+    }
+    let monthly_income_cents = if income_months > 0 { income_total / income_months } else { 0 };
+    let saving_investing_cents = if months_of_data > 0 { saved_total / months_of_data as i64 } else { 0 };
+
+    let averages = recent_averages(conn, &month, scope)?;
+    let limits = limits_for(conn, &month)?;
+    let mut lines: Vec<PlanLine> = categories::list(conn)?
+        .into_iter()
+        .filter(|c| c.kind == "expense")
+        .filter_map(|c| {
+            let average = averages.get(&c.id).copied().unwrap_or(0);
+            let current = limits.get(&c.id).copied();
+            if average == 0 && current.is_none() {
+                return None;
+            }
+            Some(PlanLine {
+                category_id: c.id,
+                category_name: c.name,
+                suggested_cents: if average > 0 { round_up(average) } else { current.unwrap_or(0) },
+                recent_average_cents: average,
+                current_limit_cents: current,
+            })
+        })
+        .collect();
+    lines.sort_by(|a, b| {
+        b.suggested_cents
+            .cmp(&a.suggested_cents)
+            .then(a.category_name.to_lowercase().cmp(&b.category_name.to_lowercase()))
+    });
+
+    let suggested_total_cents: i64 = lines.iter().map(|l| l.suggested_cents).sum();
+    let payments = debt_payments(conn, scope)?;
+    let debt_payments_cents: i64 = payments.iter().map(|p| p.monthly_payment_cents).sum();
+
+    Ok(BudgetDraft {
+        month,
+        months_of_data,
+        monthly_income_cents,
+        saving_investing_cents,
+        debt_payments: payments,
+        debt_payments_cents,
+        leftover_cents: monthly_income_cents
+            - saving_investing_cents
+            - debt_payments_cents
+            - suggested_total_cents,
+        lines,
+        suggested_total_cents,
+    })
+}
+
+/// Apply a whole set of limits to a month at once. A limit of 0 clears that
+/// category, same as `set_limit`.
+pub fn set_limits(conn: &mut Connection, month: &str, limits: &[LimitInput]) -> Result<usize> {
+    let month = parse_month(month)?;
+    let tx = conn.transaction()?;
+    for l in limits {
+        set_limit(&tx, l.category_id, &month, l.limit_cents)?;
+    }
+    tx.commit()?;
+    Ok(limits.len())
+}
+
 /// Copy every limit from one month to another, replacing what's there.
 pub fn copy_month(conn: &mut Connection, from: &str, to: &str) -> Result<usize> {
     let (from, to) = (parse_month(from)?, parse_month(to)?);
@@ -359,6 +556,72 @@ mod tests {
         assert_eq!(month_view(&c, "2026-10", Scope::Real).unwrap().total_limit_cents, 45_000);
         assert!(set_limit(&c, 9_999, "2026-10", 1_000).is_err());
         assert!(set_limit(&c, cat(&c, "Dining"), "2026-10", -5).is_err());
+    }
+
+    #[test]
+    fn draft_derives_income_saving_and_limits_from_history() {
+        let mut c = conn();
+        let checking = accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let hysa = accounts::create(&mut c, &input("Ally HYSA", "hysa")).unwrap();
+        let brokerage = accounts::create(&mut c, &input("Brokerage", "brokerage")).unwrap();
+        let mut loan = input("Car loan", "loan");
+        loan.monthly_payment_cents = Some(45_000);
+        accounts::create(&mut c, &loan).unwrap();
+
+        // Three months of history before September.
+        for month in ["2026-06", "2026-07", "2026-08"] {
+            let mut pay = tx(checking.id, &format!("{month}-01"), 500_000, "Payroll");
+            pay.category_id = Some(cat(&c, "Income"));
+            transactions::create(&c, &pay).unwrap();
+            spend(&c, checking.id, &format!("{month}-05"), -60_000, "Groceries");
+            spend(&c, checking.id, &format!("{month}-06"), -12_300, "Dining");
+            // Saving and investing: tagged transfers into the HYSA and brokerage.
+            for (target, cents) in [(hysa.id, -100_000), (brokerage.id, -50_000)] {
+                let mut moved = tx(checking.id, &format!("{month}-07"), cents, "Transfer");
+                moved.transfer_account_id = Some(target);
+                transactions::create(&c, &moved).unwrap();
+            }
+        }
+
+        let d = draft(&c, "2026-09", Scope::Real).unwrap();
+        assert_eq!(d.months_of_data, 3);
+        assert_eq!(d.monthly_income_cents, 500_000);
+        assert_eq!(d.saving_investing_cents, 150_000, "both transfers count, averaged per month");
+        assert_eq!(d.debt_payments_cents, 45_000);
+        assert_eq!(d.debt_payments[0].account_name, "Car loan");
+
+        let groceries = d.lines.iter().find(|l| l.category_name == "Groceries").unwrap();
+        assert_eq!(groceries.recent_average_cents, 60_000);
+        assert_eq!(groceries.suggested_cents, 60_000);
+        // Averages are rounded up to a readable figure.
+        let dining = d.lines.iter().find(|l| l.category_name == "Dining").unwrap();
+        assert_eq!(dining.recent_average_cents, 12_300);
+        assert_eq!(dining.suggested_cents, 12_500);
+
+        // Income minus saving, debt payments and the suggested limits.
+        assert_eq!(d.leftover_cents, 500_000 - 150_000 - 45_000 - d.suggested_total_cents);
+
+        // Applying the plan writes the limits for that month.
+        let limits: Vec<LimitInput> = d
+            .lines
+            .iter()
+            .map(|l| LimitInput { category_id: l.category_id, limit_cents: l.suggested_cents })
+            .collect();
+        set_limits(&mut c, "2026-09", &limits).unwrap();
+        let view = month_view(&c, "2026-09", Scope::Real).unwrap();
+        assert_eq!(view.total_limit_cents, d.suggested_total_cents);
+    }
+
+    #[test]
+    fn draft_without_history_is_empty_not_an_error() {
+        let mut c = conn();
+        accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let d = draft(&c, "2026-09", Scope::Real).unwrap();
+        assert_eq!(d.months_of_data, 0);
+        assert_eq!(d.monthly_income_cents, 0);
+        assert_eq!(d.saving_investing_cents, 0);
+        assert!(d.lines.is_empty());
+        assert_eq!(d.leftover_cents, 0);
     }
 
     #[test]

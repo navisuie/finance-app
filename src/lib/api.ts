@@ -6,6 +6,8 @@ import type {
   BalanceSnapshot,
   Category,
   BudgetMonth,
+  BudgetDraft,
+  LimitInput,
   DebtSummary,
   Goal,
   GoalInput,
@@ -46,6 +48,8 @@ import type {
   RentVsBuyResult,
   DebtPayoffInput,
   DebtPayoffResult,
+  BudgetPlanInput,
+  BudgetPlanResult,
   Scenario,
 } from "./types";
 
@@ -135,6 +139,9 @@ export const api = {
   setBudget: (categoryId: number, month: string, limitCents: number) =>
     invoke<BudgetMonth>("set_budget", { categoryId, month, limitCents }),
   copyBudgets: (from: string, to: string) => invoke<BudgetMonth>("copy_budgets", { from, to }),
+  budgetDraft: (month: string) => invoke<BudgetDraft>("budget_draft", { month }),
+  applyBudgetPlan: (month: string, limits: LimitInput[]) =>
+    invoke<BudgetMonth>("apply_budget_plan", { month, limits }),
 
   // Goals
   listGoals: () => invoke<Goal[]>("list_goals"),
@@ -157,6 +164,9 @@ export const api = {
   setTransactionsCategory: (ids: number[], categoryId: number | null) =>
     invoke<number>("set_transactions_category", { ids, categoryId }),
   suggestCategory: (payee: string) => invoke<number | null>("suggest_category", { payee }),
+  /** The account a recurring payment to this payee was last tagged as paying. */
+  suggestTransferAccount: (accountId: number, payee: string) =>
+    invoke<number | null>("suggest_transfer_account", { accountId, payee }),
   periodSummary: (from: string, to: string) => invoke<PeriodSummary>("period_summary", { from, to }),
   listTransferCandidates: () => invoke<TransferCandidate[]>("list_transfer_candidates"),
   confirmTransferLink: (aId: number, bId: number) => invoke<void>("confirm_transfer_link", { aId, bId }),
@@ -215,6 +225,7 @@ export const api = {
     invoke<HomeAffordabilityResult>("calc_home_affordability", { input }),
   calcRentVsBuy: (input: RentVsBuyInput) => invoke<RentVsBuyResult>("calc_rent_vs_buy", { input }),
   calcDebtPayoff: (input: DebtPayoffInput) => invoke<DebtPayoffResult>("calc_debt_payoff", { input }),
+  calcBudgetPlan: (input: BudgetPlanInput) => invoke<BudgetPlanResult>("calc_budget_plan", { input }),
   listScenarios: (calculator: string) => invoke<Scenario[]>("list_scenarios", { calculator }),
   saveScenario: (calculator: string, name: string, inputs: unknown) =>
     invoke<Scenario>("save_scenario", { calculator, name, inputs }),

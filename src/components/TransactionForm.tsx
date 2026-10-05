@@ -36,14 +36,23 @@ export function TransactionForm({
   const [categoryTouched, setCategoryTouched] = useState(editing);
   const [notes, setNotes] = useState(transaction?.notes ?? "");
   const [transferTo, setTransferTo] = useState<number | null>(transaction?.transferAccountId ?? null);
+  const [transferTouched, setTransferTouched] = useState(editing);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
   const suggest = async () => {
-    if (categoryTouched || !payee.trim()) return;
+    if (!payee.trim()) return;
     try {
-      const id = await api.suggestCategory(payee);
-      if (id !== null) setCategoryId(id);
+      if (!categoryTouched) {
+        const id = await api.suggestCategory(payee);
+        if (id !== null) setCategoryId(id);
+      }
+      // A recurring payment you've already tagged (a car loan, a card) gets
+      // offered the same account again.
+      if (transferTo === null && !transferTouched) {
+        const target = await api.suggestTransferAccount(accountId, payee);
+        if (target !== null && target !== accountId) setTransferTo(target);
+      }
     } catch {
       /* suggestions are optional */
     }
@@ -146,7 +155,10 @@ export function TransactionForm({
             id="tx-transfer"
             className={selectClass}
             value={transferTo ?? ""}
-            onChange={(e) => setTransferTo(e.target.value ? Number(e.target.value) : null)}
+            onChange={(e) => {
+              setTransferTouched(true);
+              setTransferTo(e.target.value ? Number(e.target.value) : null);
+            }}
           >
             <option value="">Not a transfer</option>
             {accounts

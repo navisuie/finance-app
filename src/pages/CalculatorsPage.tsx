@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BudgetPlanCalculator } from "../components/calc/BudgetPlanCalculator";
 import { DebtPayoffCalculator } from "../components/calc/DebtPayoffCalculator";
 import { HomeAffordabilityCalculator } from "../components/calc/HomeAffordabilityCalculator";
 import { MonteCarloCalculator } from "../components/calc/MonteCarloCalculator";
@@ -15,6 +16,7 @@ const TILES: { id: CalculatorId; title: string; blurb: string }[] = [
   { id: "home", title: "Home affordability", blurb: "Max home price under the 28/36 rule." },
   { id: "rent_vs_buy", title: "Rent vs. buy", blurb: "Net wealth under each path, year by year." },
   { id: "debt_payoff", title: "Debt payoff", blurb: "Avalanche vs. snowball, payoff date and total interest." },
+  { id: "budget_plan", title: "Budget from a salary", blurb: "Give a salary and the costs you know; it fills in the rest." },
 ];
 
 export function CalculatorsPage() {
@@ -66,5 +68,7 @@ function Calculator({ id }: { id: CalculatorId }) {
       return <RentVsBuyCalculator />;
     case "debt_payoff":
       return <DebtPayoffCalculator />;
+    case "budget_plan":
+      return <BudgetPlanCalculator />;
   }
 }

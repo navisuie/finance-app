@@ -508,6 +508,29 @@ function DebtCard({ account, onChanged }: { account: Account; onChanged: () => v
             Linked payments show up here. On the transaction, set "Paid to another account" to this one.
           </p>
         )}
+
+        {s.recentPayments.length > 0 ? (
+          <div>
+            <p className="mb-1 text-xs font-medium text-zinc-500">Paid from</p>
+            <ul className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+              {s.recentPayments.map((p) => (
+                <li key={p.id} className="flex items-baseline justify-between gap-3 py-1.5">
+                  <span className="min-w-0">
+                    <span className="text-zinc-500">{formatDate(p.postedOn)}</span>{" "}
+                    <span className="font-medium">{p.fromAccountName}</span>
+                    <span className="block truncate text-xs text-zinc-500">{p.payee}</span>
+                  </span>
+                  <span className="shrink-0 tabular-nums">
+                    <Money cents={p.amountCents} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 text-xs text-zinc-500">
+              The next payment with the same description from the same account gets tagged automatically.
+            </p>
+          </div>
+        ) : null}
       </div>
 
       {updating ? (

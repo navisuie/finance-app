@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { BudgetBuilder } from "../components/BudgetBuilder";
 import { Meter } from "../components/Meter";
 import { Money } from "../components/privacy";
 import { controlClass } from "../components/Select";
@@ -27,6 +28,7 @@ export function BudgetsPage() {
   const [month, setMonth] = useState(thisMonth());
   const [data, setData] = useState<BudgetMonth>();
   const [error, setError] = useState<string>();
+  const [building, setBuilding] = useState(false);
   const loaded = useAsync(() => api.budgetMonth(month), [month]);
 
   useEffect(() => {
@@ -132,9 +134,14 @@ export function BudgetsPage() {
 
       <div className="flex items-center justify-between px-1">
         <h2 className="text-sm font-semibold text-zinc-500">Categories</h2>
-        <Button variant="secondary" className="py-1" onClick={copyLast}>
-          Copy {monthLabel(shiftMonth(month, -1)).split(" ")[0]}'s budgets
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" className="py-1" onClick={() => setBuilding(true)}>
+            Build a budget
+          </Button>
+          <Button variant="secondary" className="py-1" onClick={copyLast}>
+            Copy {monthLabel(shiftMonth(month, -1)).split(" ")[0]}'s budgets
+          </Button>
+        </div>
       </div>
 
       <Card className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -147,6 +154,15 @@ export function BudgetsPage() {
           </p>
         ) : null}
       </Card>
+
+      {building ? (
+        <BudgetBuilder
+          month={month}
+          monthLabel={monthLabel(month)}
+          onClose={() => setBuilding(false)}
+          onApplied={setData}
+        />
+      ) : null}
     </div>
   );
 }

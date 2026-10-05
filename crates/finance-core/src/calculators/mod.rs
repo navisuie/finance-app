@@ -3,6 +3,7 @@
 //! Results carry no financial advice, only arithmetic; the UI adds the
 //! "this is a projection, not advice" note.
 
+pub mod budget_plan;
 pub mod debt_payoff;
 pub mod home;
 pub mod rent_vs_buy;

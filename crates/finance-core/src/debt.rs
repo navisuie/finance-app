@@ -138,6 +138,9 @@ pub struct DebtSummary {
     pub apr_bps: Option<i64>,
     pub monthly_payment_cents: Option<i64>,
     pub payments: PaymentsSince,
+    /// The payments you've tagged as paying this debt, newest first, with the
+    /// account each came from.
+    pub recent_payments: Vec<crate::transactions::LinkedPayment>,
     /// Interest we estimate has built up since the balance date.
     pub estimated_interest_cents: i64,
     /// Balance, plus estimated interest, minus payments you've linked.
@@ -191,6 +194,7 @@ pub fn summary(conn: &Connection, account_id: i64) -> Result<DebtSummary> {
         apr_bps,
         monthly_payment_cents,
         payments,
+        recent_payments: crate::transactions::payments_to(conn, account_id, 6)?,
         estimated_interest_cents,
         suggested_balance_cents,
         projection,

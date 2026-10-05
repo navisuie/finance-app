@@ -345,6 +345,75 @@ pub fn suggest_category(conn: &Connection, payee: &str) -> Result<Option<i64>> {
     Ok(payee_category_map(conn)?.get(&key).copied())
 }
 
+/// (source account, normalised payee) -> the account that payee's money was
+/// most recently sent to. This is what makes a recurring loan or card payment
+/// recognisable the second time: once you've tagged "Honda Financial" in
+/// Checking as paying the car loan, the next one can be tagged for you.
+///
+/// Keyed by source account as well as payee, because the same payee name in
+/// a different account isn't necessarily the same arrangement.
+pub fn payee_transfer_map(conn: &Connection) -> Result<HashMap<(i64, String), i64>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT account_id, payee, transfer_account_id FROM transactions
+         WHERE transfer_account_id IS NOT NULL ORDER BY posted_on DESC, id DESC LIMIT 10000",
+    )?;
+    let mut map = HashMap::new();
+    let mut rows = stmt.query([])?;
+    while let Some(r) = rows.next()? {
+        let account_id: i64 = r.get(0)?;
+        let payee: String = r.get(1)?;
+        let key = normalize_payee(&payee);
+        if !key.is_empty() {
+            map.entry((account_id, key)).or_insert(r.get(2)?);
+        }
+    }
+    Ok(map)
+}
+
+/// The account this payee's money was last sent to from this account, for
+/// recognising a recurring debt or savings payment.
+pub fn suggest_transfer_account(conn: &Connection, account_id: i64, payee: &str) -> Result<Option<i64>> {
+    let key = normalize_payee(payee);
+    if key.is_empty() {
+        return Ok(None);
+    }
+    Ok(payee_transfer_map(conn)?.get(&(account_id, key)).copied())
+}
+
+/// Payments you've tagged as going to `account_id` (a debt, or any account
+/// you track), newest first.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedPayment {
+    pub id: i64,
+    pub posted_on: String,
+    /// Positive: what the payment was worth.
+    pub amount_cents: i64,
+    pub payee: String,
+    pub from_account_id: i64,
+    pub from_account_name: String,
+}
+
+pub fn payments_to(conn: &Connection, account_id: i64, limit: i64) -> Result<Vec<LinkedPayment>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.posted_on, -t.amount_cents, t.payee, t.account_id, a.name
+         FROM transactions t JOIN accounts a ON a.id = t.account_id
+         WHERE t.transfer_account_id = ?1 AND t.amount_cents < 0
+         ORDER BY t.posted_on DESC, t.id DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![account_id, limit.clamp(1, 100)], |r| {
+        Ok(LinkedPayment {
+            id: r.get(0)?,
+            posted_on: r.get(1)?,
+            amount_cents: r.get(2)?,
+            payee: r.get(3)?,
+            from_account_id: r.get(4)?,
+            from_account_name: r.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -490,6 +559,63 @@ pub(crate) mod tests {
         update(&c, car.id, &edit).unwrap();
         let s = summary(&c, "2026-09-01", "2026-09-30", crate::accounts::Scope::Real).unwrap();
         assert_eq!(s.spending_cents, 50_000);
+    }
+
+    #[test]
+    fn recurring_debt_payments_are_recognised_by_payee() {
+        let mut c = conn();
+        let checking = accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let other = accounts::create(&mut c, &input("Second checking", "checking")).unwrap();
+        let loan = accounts::create(&mut c, &input("Car loan", "loan")).unwrap();
+
+        // Tag one payment by hand.
+        let mut first = tx(checking.id, "2026-08-05", -70_000, "HONDA FINANCIAL SVC #4821");
+        first.transfer_account_id = Some(loan.id);
+        create(&c, &first).unwrap();
+
+        // The same payee next month, from the same account, is recognised —
+        // reference numbers and case don't matter.
+        assert_eq!(
+            suggest_transfer_account(&c, checking.id, "honda financial svc #9137").unwrap(),
+            Some(loan.id)
+        );
+        // A different account isn't assumed to have the same arrangement.
+        assert_eq!(suggest_transfer_account(&c, other.id, "HONDA FINANCIAL SVC").unwrap(), None);
+        // An unrelated payee stays untagged.
+        assert_eq!(suggest_transfer_account(&c, checking.id, "Whole Foods").unwrap(), None);
+
+        // A payee that isn't the same name doesn't match: only the reference
+        // number is ignored, not a different description.
+        assert_eq!(suggest_transfer_account(&c, checking.id, "Honda Financial").unwrap(), None);
+
+        // Re-tagging to somewhere else wins from then on.
+        let card = accounts::create(&mut c, &input("Card", "credit_card")).unwrap();
+        let mut moved = tx(checking.id, "2026-09-05", -70_000, "Honda Financial Svc");
+        moved.transfer_account_id = Some(card.id);
+        create(&c, &moved).unwrap();
+        assert_eq!(suggest_transfer_account(&c, checking.id, "HONDA FINANCIAL SVC").unwrap(), Some(card.id));
+    }
+
+    #[test]
+    fn payments_to_a_debt_list_their_source_account() {
+        let mut c = conn();
+        let checking = accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let loan = accounts::create(&mut c, &input("Car loan", "loan")).unwrap();
+        for date in ["2026-07-05", "2026-08-05"] {
+            let mut p = tx(checking.id, date, -70_000, "Honda Financial");
+            p.transfer_account_id = Some(loan.id);
+            create(&c, &p).unwrap();
+        }
+        // Money coming *in* isn't a payment to the debt.
+        let mut refund = tx(checking.id, "2026-08-10", 5_000, "Honda refund");
+        refund.transfer_account_id = Some(loan.id);
+        create(&c, &refund).unwrap();
+
+        let payments = payments_to(&c, loan.id, 6).unwrap();
+        assert_eq!(payments.len(), 2);
+        assert_eq!(payments[0].posted_on, "2026-08-05", "newest first");
+        assert_eq!(payments[0].amount_cents, 70_000, "reported as a positive payment");
+        assert_eq!(payments[0].from_account_name, "Checking");
     }
 
     #[test]

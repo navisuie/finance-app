@@ -655,14 +655,19 @@ pub fn commit(
     let valid_cats: HashSet<i64> = categories::list(conn)?.into_iter().map(|c| c.id).collect();
     let now = now_rfc3339();
 
+    // Recurring payments you've already tagged (a car loan, a card payment)
+    // get tagged again, so they stay out of spending without re-doing it.
+    let learned_transfers = crate::transactions::payee_transfer_map(conn)?;
+
     let tx = conn.transaction()?;
     let mut inserted = 0;
     let mut skipped = 0;
     {
         let mut stmt = tx.prepare(
             "INSERT OR IGNORE INTO transactions
-               (account_id, posted_on, amount_cents, payee, category_id, notes, source, import_hash, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'csv', ?7, ?8)",
+               (account_id, posted_on, amount_cents, payee, category_id, notes, source, import_hash, created_at,
+                transfer_account_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'csv', ?7, ?8, ?9)",
         )?;
         for r in &prepared.rows {
             let importable = matches!(r.status, RowStatus::New | RowStatus::PossibleDuplicate);
@@ -676,6 +681,13 @@ pub fn commit(
                 Some(None) => None,
                 None => r.category_id,
             };
+            // Only money going out can be a payment to another account, and
+            // never to the account it came from.
+            let transfer_to = r
+                .amount_cents
+                .filter(|c| *c < 0)
+                .and_then(|_| learned_transfers.get(&(account_id, normalize_payee(&r.payee))).copied())
+                .filter(|target| *target != account_id);
             let n = stmt.execute(params![
                 account_id,
                 r.posted_on,
@@ -684,7 +696,8 @@ pub fn commit(
                 category,
                 r.notes,
                 prepared.keys[&r.line],
-                now
+                now,
+                transfer_to
             ])?;
             if n == 1 { inserted += 1 } else { skipped += 1 }
         }
@@ -768,6 +781,39 @@ Date,Description,Withdrawals,Deposits,Category\n\
 
     fn all_lines(p: &Preview) -> Vec<usize> {
         p.rows.iter().map(|r| r.line).collect()
+    }
+
+    const LOAN_PAYMENTS: &str = "Date,Description,Amount\n\
+09/05/2026,HONDA FINANCIAL SVC #4821,-700.00\n\
+09/06/2026,PAYROLL ACME CORP,2500.00\n";
+
+    #[test]
+    fn an_imported_recurring_payment_keeps_the_account_it_pays() {
+        let (mut c, acct) = setup("checking");
+        let loan = accounts::create(&mut c, &crate::accounts::tests::input("Car loan", "loan")).unwrap();
+
+        // Tag last month's payment by hand, the way the form does.
+        let mut tagged = crate::transactions::tests::tx(acct, "2026-08-05", -70_000, "HONDA FINANCIAL SVC #1109");
+        tagged.transfer_account_id = Some(loan.id);
+        crate::transactions::create(&c, &tagged).unwrap();
+
+        let m = detect(&c, acct, LOAN_PAYMENTS).unwrap().mapping.unwrap();
+        let p = preview(&c, acct, LOAN_PAYMENTS, &m).unwrap();
+        commit(&mut c, acct, LOAN_PAYMENTS, &m, &all_lines(&p), &HashMap::new()).unwrap();
+
+        let page = crate::transactions::query(&c, &Default::default()).unwrap();
+        let imported = page.items.iter().find(|t| t.posted_on == "2026-09-05").unwrap();
+        assert_eq!(imported.transfer_account_id, Some(loan.id), "the recurring payment is tagged for you");
+        assert_eq!(imported.transfer_account_name.as_deref(), Some("Car loan"));
+
+        // Income from an unrelated payee stays untagged.
+        let payroll = page.items.iter().find(|t| t.payee.contains("PAYROLL")).unwrap();
+        assert_eq!(payroll.transfer_account_id, None);
+
+        // And it's out of spending, like any tagged transfer.
+        let s =
+            crate::transactions::summary(&c, "2026-09-01", "2026-09-30", crate::accounts::Scope::Real).unwrap();
+        assert_eq!(s.spending_cents, 0);
     }
 
     #[test]

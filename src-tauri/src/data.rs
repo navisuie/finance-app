@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use finance_core::accounts::{
     self, Account, AccountInput, BalanceSnapshot, NetWorth, NetWorthPoint, Scope, TestDataSummary,
 };
-use finance_core::budgets::{self, BudgetMonth};
+use finance_core::budgets::{self, BudgetDraft, BudgetMonth, LimitInput};
 use finance_core::goals::{self, Goal, GoalInput};
 use finance_core::plaid::api::Environment;
 use finance_core::plaid::config;
@@ -150,6 +150,26 @@ pub fn set_budget(
     })?)
 }
 
+/// A suggested budget for `month`, derived from the months before it.
+#[tauri::command]
+pub fn budget_draft(state: State<'_, AppState>, month: String) -> CmdResult<BudgetDraft> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| budgets::draft(s.conn(), &month, scope))?)
+}
+
+#[tauri::command]
+pub fn apply_budget_plan(
+    state: State<'_, AppState>,
+    month: String,
+    limits: Vec<LimitInput>,
+) -> CmdResult<BudgetMonth> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| {
+        budgets::set_limits(s.conn_mut(), &month, &limits)?;
+        budgets::month_view(s.conn(), &month, scope)
+    })?)
+}
+
 #[tauri::command]
 pub fn copy_budgets(state: State<'_, AppState>, from: String, to: String) -> CmdResult<BudgetMonth> {
     let scope = active_scope(&state)?;
@@ -248,6 +268,17 @@ pub fn set_transactions_category(
 #[tauri::command]
 pub fn suggest_category(state: State<'_, AppState>, payee: String) -> CmdResult<Option<i64>> {
     Ok(state.with_session(|s| transactions::suggest_category(s.conn(), &payee))?)
+}
+
+/// The account a recurring payment to this payee was last tagged as paying,
+/// so the form can offer it again.
+#[tauri::command]
+pub fn suggest_transfer_account(
+    state: State<'_, AppState>,
+    account_id: i64,
+    payee: String,
+) -> CmdResult<Option<i64>> {
+    Ok(state.with_session(|s| transactions::suggest_transfer_account(s.conn(), account_id, &payee))?)
 }
 
 #[tauri::command]
