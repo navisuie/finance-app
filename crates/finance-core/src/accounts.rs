@@ -297,7 +297,7 @@ pub fn delete(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
-fn upsert_balance(conn: &Connection, account_id: i64, as_of: &str, cents: i64, source: &str) -> Result<()> {
+pub(crate) fn upsert_balance(conn: &Connection, account_id: i64, as_of: &str, cents: i64, source: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO balances (account_id, as_of, amount_cents, source) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(account_id, as_of) DO UPDATE SET amount_cents = excluded.amount_cents,

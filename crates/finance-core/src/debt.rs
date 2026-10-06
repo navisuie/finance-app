@@ -1,15 +1,18 @@
 //! Debts you track yourself: payoff projections and the payments you link to
 //! them.
 //!
-//! Balances are never changed behind your back. Payments you link to a debt
-//! are summed up and offered as a suggested new balance, which you apply (or
-//! ignore) yourself.
+//! A debt you track by hand (with an APR set) has its balance kept current
+//! from the payments you tag against it: last statement balance, plus
+//! estimated interest, minus what you've paid. The statement balance you
+//! enter is always the anchor, so correcting it from a real statement resets
+//! the running total. A Plaid-fed debt is left alone — the bank's own figure
+//! wins there.
 
 use chrono::NaiveDate;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
-use crate::accounts::{self, Account};
+use crate::accounts::{self, Account, Scope};
 use crate::error::{CoreError, Result};
 use crate::util::today;
 
@@ -131,6 +134,97 @@ pub fn payments_since_balance(conn: &Connection, account_id: i64) -> Result<Paym
     Ok(PaymentsSince { since, count, total_cents: total })
 }
 
+// ------------------------------------------------- keeping the balance current
+
+/// The source recorded on balances this calculation writes. Any other source
+/// — a statement balance you entered, or one Plaid reported — anchors it.
+pub const AUTO_SOURCE: &str = "auto";
+
+/// True when the app maintains this debt's balance itself: a debt you track
+/// by hand with an APR set. A Plaid-fed account keeps whatever the bank says.
+fn tracks_balance_itself(conn: &Connection, account: &Account) -> Result<bool> {
+    if account.is_asset || account.archived || account.linked {
+        return Ok(false);
+    }
+    let apr: Option<i64> =
+        conn.query_row("SELECT apr_bps FROM accounts WHERE id = ?1", [account.id], |r| r.get(0))?;
+    Ok(apr.is_some())
+}
+
+/// The most recent balance that didn't come from this calculation.
+fn anchor(conn: &Connection, account_id: i64) -> Result<Option<(String, i64)>> {
+    Ok(conn
+        .query_row(
+            "SELECT as_of, amount_cents FROM balances
+             WHERE account_id = ?1 AND source != ?2 ORDER BY as_of DESC, id DESC LIMIT 1",
+            rusqlite::params![account_id, AUTO_SOURCE],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?)
+}
+
+/// Interest we estimate has accrued on `balance` over `days` at `apr_bps`.
+fn accrued_interest(balance_cents: i64, apr_bps: Option<i64>, days: i64) -> i64 {
+    match apr_bps {
+        Some(apr) if apr > 0 && balance_cents > 0 && days > 0 => {
+            ((balance_cents as i128 * apr as i128 * days as i128) / (10_000 * 365)) as i64
+        }
+        _ => 0,
+    }
+}
+
+/// Bring this debt's balance up to date from the payments tagged against it:
+/// the last statement balance, plus estimated interest since, minus what
+/// you've paid. Recomputed from that anchor every time, so calling it twice
+/// never double-counts. Returns the new balance when it wrote one.
+///
+/// Only writes once there's at least one payment to apply, so a debt never
+/// grows on its own behind your back.
+pub fn refresh_auto_balance(conn: &Connection, account_id: i64) -> Result<Option<i64>> {
+    let account = accounts::get(conn, account_id)?;
+    if !tracks_balance_itself(conn, &account)? {
+        return Ok(None);
+    }
+    // Clear the snapshot from the last run first, so this recomputes from
+    // scratch and a statement balance dated in the past still wins.
+    conn.execute(
+        "DELETE FROM balances WHERE account_id = ?1 AND source = ?2",
+        rusqlite::params![account_id, AUTO_SOURCE],
+    )?;
+    let Some((anchored_on, anchored_cents)) = anchor(conn, account_id)? else {
+        return Ok(None); // nothing to count from yet
+    };
+    let (paid_count, paid_cents): (i64, i64) = conn.query_row(
+        "SELECT count(*), coalesce(sum(-amount_cents), 0) FROM transactions
+         WHERE transfer_account_id = ?1 AND amount_cents < 0 AND posted_on > ?2",
+        rusqlite::params![account_id, anchored_on],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    if paid_count == 0 {
+        return Ok(None);
+    }
+    let apr: Option<i64> =
+        conn.query_row("SELECT apr_bps FROM accounts WHERE id = ?1", [account_id], |r| r.get(0))?;
+    let day = today();
+    let interest = accrued_interest(anchored_cents, apr, days_between(&anchored_on, &day));
+    let balance = (anchored_cents + interest - paid_cents).max(0);
+    accounts::upsert_balance(conn, account_id, &day, balance, AUTO_SOURCE)?;
+    Ok(Some(balance))
+}
+
+/// Refresh every debt whose balance the app maintains. Cheap — there are only
+/// ever a handful of debt accounts — so callers don't have to work out which
+/// debt a payment touched.
+pub fn refresh_all_auto_balances(conn: &Connection) -> Result<usize> {
+    let mut n = 0;
+    for a in accounts::list(conn, false, Scope::All)? {
+        if !a.is_asset && refresh_auto_balance(conn, a.id)?.is_some() {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DebtSummary {
@@ -145,6 +239,10 @@ pub struct DebtSummary {
     pub estimated_interest_cents: i64,
     /// Balance, plus estimated interest, minus payments you've linked.
     pub suggested_balance_cents: Option<i64>,
+    /// True when the app keeps this balance up to date from tagged payments.
+    pub auto_tracked: bool,
+    /// The statement balance the running total is counted from.
+    pub anchored_on: Option<String>,
     pub projection: Projection,
 }
 
@@ -165,6 +263,7 @@ pub fn summary(conn: &Connection, account_id: i64) -> Result<DebtSummary> {
         [account_id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
+    let auto_tracked = tracks_balance_itself(conn, &account)?;
     let payments = payments_since_balance(conn, account_id)?;
     let balance = account.balance_cents.unwrap_or(0);
     let day = today();
@@ -195,6 +294,8 @@ pub fn summary(conn: &Connection, account_id: i64) -> Result<DebtSummary> {
         monthly_payment_cents,
         payments,
         recent_payments: crate::transactions::payments_to(conn, account_id, 6)?,
+        auto_tracked,
+        anchored_on: anchor(conn, account_id)?.map(|(as_of, _)| as_of),
         estimated_interest_cents,
         suggested_balance_cents,
         projection,
@@ -272,6 +373,72 @@ mod tests {
             project(1_000_000, Some(2400), Some(20_001), date("2026-09-17")),
             Projection::Paid(_)
         ));
+    }
+
+    #[test]
+    fn tagged_payments_bring_the_balance_down() {
+        let mut c = conn();
+        let checking = crate::accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let mut loan = input("Car loan", "loan");
+        loan.balance_cents = Some(1_800_000); // $18,000 owed
+        loan.balance_as_of = Some("2026-08-01".into());
+        loan.apr_bps = Some(649);
+        let loan = crate::accounts::create(&mut c, &loan).unwrap();
+
+        // Nothing to apply yet, so nothing is written.
+        assert_eq!(refresh_auto_balance(&c, loan.id).unwrap(), None);
+        assert_eq!(accounts::get(&c, loan.id).unwrap().balance_cents, Some(1_800_000));
+
+        let mut pay = tx(checking.id, "2026-08-05", -70_000, "Honda Financial");
+        pay.transfer_account_id = Some(loan.id);
+        transactions::create(&c, &pay).unwrap();
+
+        let after_one = refresh_auto_balance(&c, loan.id).unwrap().expect("a payment to apply");
+        assert!(after_one < 1_800_000, "the $700 payment brings it down");
+        assert_eq!(accounts::get(&c, loan.id).unwrap().balance_cents, Some(after_one));
+
+        // Running again doesn't double-count: it recomputes from the anchor.
+        assert_eq!(refresh_auto_balance(&c, loan.id).unwrap(), Some(after_one));
+        assert_eq!(accounts::get(&c, loan.id).unwrap().balance_cents, Some(after_one));
+
+        // A second payment takes it down again, by about another $700.
+        let mut pay2 = tx(checking.id, "2026-09-05", -70_000, "Honda Financial");
+        pay2.transfer_account_id = Some(loan.id);
+        transactions::create(&c, &pay2).unwrap();
+        let after_two = refresh_auto_balance(&c, loan.id).unwrap().unwrap();
+        assert!(after_two < after_one);
+        assert!((after_one - after_two - 70_000i64).abs() < 1_000, "roughly the payment, less interest");
+
+        // The statement balance you enter wins and re-anchors the running total.
+        accounts::set_balance(&c, loan.id, "2026-09-20", 1_700_000).unwrap();
+        assert_eq!(refresh_auto_balance(&c, loan.id).unwrap(), None, "no payments after that statement");
+        assert_eq!(accounts::get(&c, loan.id).unwrap().balance_cents, Some(1_700_000));
+
+        let s = summary(&c, loan.id).unwrap();
+        assert!(s.auto_tracked);
+        assert_eq!(s.anchored_on.as_deref(), Some("2026-09-20"));
+    }
+
+    #[test]
+    fn a_debt_without_an_apr_or_a_bank_feed_is_left_alone() {
+        let mut c = conn();
+        let checking = crate::accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        // No APR: we can't estimate interest, so we don't touch the balance.
+        let mut loan = input("Family loan", "loan");
+        loan.balance_cents = Some(500_000);
+        loan.balance_as_of = Some("2026-08-01".into());
+        let loan = crate::accounts::create(&mut c, &loan).unwrap();
+        let mut pay = tx(checking.id, "2026-08-05", -50_000, "Repayment");
+        pay.transfer_account_id = Some(loan.id);
+        transactions::create(&c, &pay).unwrap();
+
+        assert_eq!(refresh_auto_balance(&c, loan.id).unwrap(), None);
+        assert_eq!(accounts::get(&c, loan.id).unwrap().balance_cents, Some(500_000));
+        assert!(!summary(&c, loan.id).unwrap().auto_tracked);
+
+        // An asset account is never treated as a debt.
+        let savings = crate::accounts::create(&mut c, &input("Savings", "hysa")).unwrap();
+        assert_eq!(refresh_auto_balance(&c, savings.id).unwrap(), None);
     }
 
     #[test]

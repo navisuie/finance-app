@@ -257,7 +257,10 @@ pub async fn plaid_sync_item(app: AppHandle, item_id: i64) -> CmdResult<SyncResu
     blocking(app, move |state| {
         state.touch()?;
         let api = client(state)?;
-        service::sync_item(&api, state, item_id)
+        let result = service::sync_item(&api, state, item_id)?;
+        // Synced payments tagged to a debt move its balance.
+        state.with_session_passive(|s| finance_core::debt::refresh_all_auto_balances(s.conn()))?;
+        Ok(result)
     })
     .await
 }
@@ -276,7 +279,9 @@ pub struct SyncOutcome {
 pub async fn plaid_sync_all(app: AppHandle) -> CmdResult<Vec<SyncOutcome>> {
     blocking(app, move |state| {
         let api = client(state)?;
-        Ok(service::sync_all(&api, state)?
+        let outcomes = service::sync_all(&api, state)?;
+        state.with_session_passive(|s| finance_core::debt::refresh_all_auto_balances(s.conn()))?;
+        Ok(outcomes
             .into_iter()
             .map(|r| match r {
                 Ok(res) => SyncOutcome { item_id: res.item_id, result: Some(res), error: None },

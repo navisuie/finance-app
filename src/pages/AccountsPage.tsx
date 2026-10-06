@@ -484,7 +484,23 @@ function DebtCard({ account, onChanged }: { account: Account; onChanged: () => v
         </p>
         <ProjectionLines projection={s.projection} />
 
-        {s.payments.count > 0 ? (
+        {s.autoTracked ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg bg-zinc-50 p-3 text-sm dark:bg-zinc-800/60">
+            <div className="min-w-0 flex-1">
+              <p>
+                Balance updates itself as you pay: <Money cents={account.balanceCents ?? 0} /> owed.
+              </p>
+              <p className="text-xs text-zinc-500">
+                Counted from your statement balance
+                {s.anchoredOn ? ` on ${formatDate(s.anchoredOn)}` : ""}, plus estimated interest, minus the payments
+                below. Enter a statement balance any time to correct it.
+              </p>
+            </div>
+            <Button variant="secondary" className="py-1" onClick={() => setUpdating(true)}>
+              Statement balance
+            </Button>
+          </div>
+        ) : s.payments.count > 0 ? (
           <div className="flex flex-wrap items-center gap-3 rounded-lg bg-zinc-50 p-3 text-sm dark:bg-zinc-800/60">
             <div className="min-w-0 flex-1">
               <p>
@@ -505,7 +521,9 @@ function DebtCard({ account, onChanged }: { account: Account; onChanged: () => v
           </div>
         ) : (
           <p className="text-xs text-zinc-500">
-            Linked payments show up here. On the transaction, set "Paid to another account" to this one.
+            {s.aprBps === null
+              ? "Set an APR and this balance will keep itself up to date from the payments you tag."
+              : 'Tag a payment with "Paid to another account" set to this one, and the balance follows it down.'}
           </p>
         )}
 
@@ -527,7 +545,8 @@ function DebtCard({ account, onChanged }: { account: Account; onChanged: () => v
               ))}
             </ul>
             <p className="mt-1 text-xs text-zinc-500">
-              The next payment with the same description from the same account gets tagged automatically.
+              The next payment with the same description from the same account gets tagged automatically, and comes
+              off this balance.
             </p>
           </div>
         ) : null}
@@ -537,7 +556,11 @@ function DebtCard({ account, onChanged }: { account: Account; onChanged: () => v
         <BalanceForm
           account={account}
           suggestedCents={s.suggestedBalanceCents ?? undefined}
-          note="Pre-filled from the payments you linked plus estimated interest. Change it to match your statement."
+          note={
+            s.autoTracked
+              ? "Enter the balance from your statement. The running total starts again from this figure."
+              : "Pre-filled from the payments you linked plus estimated interest. Change it to match your statement."
+          }
           onClose={() => setUpdating(false)}
           onSaved={() => {
             setUpdating(false);

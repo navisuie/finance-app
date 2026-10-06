@@ -82,6 +82,37 @@ pub struct PeriodSummary {
     /// Positive number: total spent (excludes transfers).
     pub spending_cents: i64,
     pub transaction_count: i64,
+    /// Money moved into savings, brokerage or retirement accounts. Already
+    /// out of `spending_cents` — reported so saving and investing can be
+    /// shown for what they are rather than quietly left out.
+    pub saved_cents: i64,
+    /// How much of `spending_cents` has no category. Uncategorized money out
+    /// counts as spending, so this is the usual reason a savings rate looks
+    /// wrong.
+    pub uncategorized_spending_cents: i64,
+}
+
+/// Account kinds that count as saving or investing when money is moved into them.
+pub const SAVING_KINDS: &[&str] =
+    &["savings", "hysa", "brokerage", "401k", "roth_ira", "traditional_ira", "hsa"];
+
+/// Money tagged as moved into a savings or investment account between two
+/// dates (inclusive).
+pub fn saved_between(conn: &Connection, from: &str, to: &str, scope: Scope) -> Result<i64> {
+    let kinds = SAVING_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
+    Ok(conn.query_row(
+        &format!(
+            "SELECT coalesce(sum(-t.amount_cents), 0)
+             FROM transactions t
+             JOIN accounts a ON a.id = t.account_id
+             JOIN accounts target ON target.id = t.transfer_account_id
+             WHERE t.posted_on BETWEEN ?1 AND ?2 AND t.amount_cents < 0
+               AND target.kind IN ({kinds}) AND {}",
+            scope.sql()
+        ),
+        params![parse_date(from)?, parse_date(to)?],
+        |r| r.get(0),
+    )?)
 }
 
 pub(crate) const MAX_AMOUNT_CENTS: i64 = 1_000_000_000_000; // $10 billion
@@ -295,7 +326,7 @@ pub fn query(conn: &Connection, f: &TransactionFilter) -> Result<TransactionPage
 pub fn summary(conn: &Connection, from: &str, to: &str, scope: Scope) -> Result<PeriodSummary> {
     let from = parse_date(from)?;
     let to = parse_date(to)?;
-    Ok(conn.query_row(
+    let summary = conn.query_row(
         &format!(
         "SELECT
             coalesce(sum(CASE WHEN t.amount_cents > 0 AND coalesce(c.kind,'') = 'income'
@@ -304,16 +335,27 @@ pub fn summary(conn: &Connection, from: &str, to: &str, scope: Scope) -> Result<
                               THEN -t.amount_cents
                               WHEN t.amount_cents > 0 AND c.kind = 'expense'
                               THEN -t.amount_cents END), 0),
-            count(*)
+            count(*),
+            coalesce(sum(CASE WHEN t.amount_cents < 0 AND t.category_id IS NULL
+                              THEN -t.amount_cents END), 0)
          FROM transactions t
          JOIN accounts a ON a.id = t.account_id
          LEFT JOIN categories c ON c.id = t.category_id
          WHERE t.posted_on BETWEEN ?1 AND ?2 AND t.transfer_account_id IS NULL AND {}",
             scope.sql()
         ),
-        params![from, to],
-        |r| Ok(PeriodSummary { income_cents: r.get(0)?, spending_cents: r.get(1)?, transaction_count: r.get(2)? }),
-    )?)
+        params![&from, &to],
+        |r| {
+            Ok(PeriodSummary {
+                income_cents: r.get(0)?,
+                spending_cents: r.get(1)?,
+                transaction_count: r.get(2)?,
+                uncategorized_spending_cents: r.get(3)?,
+                saved_cents: 0, // filled in below
+            })
+        },
+    )?;
+    Ok(PeriodSummary { saved_cents: saved_between(conn, &from, &to, scope)?, ..summary })
 }
 
 /// Normalised payee -> the category most recently used for it, built from
@@ -616,6 +658,62 @@ pub(crate) mod tests {
         assert_eq!(payments[0].posted_on, "2026-08-05", "newest first");
         assert_eq!(payments[0].amount_cents, 70_000, "reported as a positive payment");
         assert_eq!(payments[0].from_account_name, "Checking");
+    }
+
+    #[test]
+    fn investing_counts_as_saved_not_spent() {
+        let mut c = conn();
+        let checking = accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let brokerage = accounts::create(&mut c, &input("Brokerage", "brokerage")).unwrap();
+        let hysa = accounts::create(&mut c, &input("Ally HYSA", "hysa")).unwrap();
+
+        let mut pay = tx(checking.id, "2026-09-01", 600_000, "Payroll");
+        pay.category_id = Some(cat(&c, "Income"));
+        create(&c, &pay).unwrap();
+
+        // Tagged moves into investments and savings.
+        for (target, cents) in [(brokerage.id, -200_000), (hysa.id, -100_000)] {
+            let mut moved = tx(checking.id, "2026-09-05", cents, "Transfer");
+            moved.transfer_account_id = Some(target);
+            create(&c, &moved).unwrap();
+        }
+        // Real spending, and some money out with no category at all.
+        let mut groceries = tx(checking.id, "2026-09-06", -50_000, "Whole Foods");
+        groceries.category_id = Some(cat(&c, "Groceries"));
+        create(&c, &groceries).unwrap();
+        create(&c, &tx(checking.id, "2026-09-07", -30_000, "Who knows")).unwrap();
+
+        let s = summary(&c, "2026-09-01", "2026-09-30", Scope::Real).unwrap();
+        assert_eq!(s.income_cents, 600_000);
+        assert_eq!(s.saved_cents, 300_000, "both the brokerage and the HYSA count as saving");
+        assert_eq!(s.spending_cents, 80_000, "investing isn't spending; the uncategorized $300 is");
+        assert_eq!(s.uncategorized_spending_cents, 30_000, "surfaced so a wrong rate can be explained");
+
+        // So the savings rate the dashboard shows is (600 - 80) / 600 = 86%.
+        let rate = (s.income_cents - s.spending_cents) as f64 / s.income_cents as f64;
+        assert!((rate - 0.866).abs() < 0.01, "rate={rate}");
+    }
+
+    #[test]
+    fn an_untagged_move_to_investments_looks_like_spending() {
+        // Why a savings rate can go deeply negative: money out with no
+        // category and no transfer tag is counted as spending, because
+        // nothing records where it went.
+        let mut c = conn();
+        let checking = accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        accounts::create(&mut c, &input("Brokerage", "brokerage")).unwrap();
+        let mut pay = tx(checking.id, "2026-09-01", 100_000, "Payroll");
+        pay.category_id = Some(cat(&c, "Income"));
+        create(&c, &pay).unwrap();
+        create(&c, &tx(checking.id, "2026-09-05", -1_000_000, "To brokerage")).unwrap();
+
+        let s = summary(&c, "2026-09-01", "2026-09-30", Scope::Real).unwrap();
+        assert_eq!(s.saved_cents, 0);
+        assert_eq!(s.spending_cents, 1_000_000);
+        assert_eq!(s.uncategorized_spending_cents, 1_000_000);
+        // (1,000 - 10,000) / 1,000 = -900%: exactly the complaint.
+        let rate = (s.income_cents - s.spending_cents) as f64 / s.income_cents as f64;
+        assert!((rate + 9.0).abs() < 0.01, "rate={rate}");
     }
 
     #[test]

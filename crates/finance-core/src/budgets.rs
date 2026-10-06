@@ -238,12 +238,62 @@ pub fn set_limit(conn: &Connection, category_id: i64, month: &str, limit_cents: 
 
 // ------------------------------------------------------- building a budget
 
-/// Money moved into one of these account kinds counts as saving or
-/// investing rather than spending.
-const SAVING_KINDS: &[&str] = &["savings", "hysa", "brokerage", "401k", "roth_ira", "traditional_ira", "hsa"];
-
-/// How many months back the draft looks.
+/// How many months back the draft looks for spending patterns.
 const LOOKBACK_MONTHS: i32 = 3;
+
+/// Income is looked at over a longer window than spending: pay arrives in
+/// lumps (a paycheck landing on the 31st lands in the next month's totals),
+/// so a longer run of months makes a steadier figure.
+const INCOME_LOOKBACK_MONTHS: i32 = 6;
+
+/// What a month's income looks like against what you usually bring in. A
+/// savings rate measured against a month that hasn't been paid yet is
+/// meaningless, so this gives something sensible to measure against.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IncomeBaseline {
+    pub month: String,
+    /// Average over the previous months that had any income at all.
+    pub typical_monthly_cents: i64,
+    /// How many of those months there were.
+    pub months_of_data: u32,
+    /// Income actually recorded in `month` so far.
+    pub received_cents: i64,
+    /// What to measure against: what's been received, or what you usually
+    /// bring in when that's more (a month that hasn't been paid yet).
+    pub expected_cents: i64,
+    /// True when `expected_cents` is the typical figure rather than what has
+    /// actually landed — so the UI can say it's an estimate.
+    pub estimated: bool,
+}
+
+/// Average monthly income before `month`, and what this month should be
+/// measured against.
+pub fn income_baseline(conn: &Connection, month: &str, scope: Scope) -> Result<IncomeBaseline> {
+    let month = parse_month(month)?;
+    let mut total = 0;
+    let mut months_of_data = 0;
+    for back in 1..=INCOME_LOOKBACK_MONTHS {
+        let income = income_for(conn, &shift_month(&month, -back)?, scope)?;
+        if income > 0 {
+            total += income;
+            months_of_data += 1;
+        }
+    }
+    let typical_monthly_cents = if months_of_data > 0 { total / months_of_data as i64 } else { 0 };
+    let received_cents = income_for(conn, &month, scope)?;
+    // Only stand in for what's been received when there's history to stand
+    // on and this month is genuinely behind it.
+    let estimated = months_of_data > 0 && received_cents < typical_monthly_cents;
+    Ok(IncomeBaseline {
+        month,
+        typical_monthly_cents,
+        months_of_data,
+        received_cents,
+        expected_cents: if estimated { typical_monthly_cents } else { received_cents },
+        estimated,
+    })
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -304,20 +354,7 @@ fn round_up(cents: i64) -> i64 {
 /// Money tagged as moving into a savings or investment account in one month.
 fn saved_in(conn: &Connection, month: &str, scope: Scope) -> Result<i64> {
     let (from, to) = month_range(month)?;
-    let kinds = SAVING_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-    Ok(conn.query_row(
-        &format!(
-            "SELECT coalesce(sum(-t.amount_cents), 0)
-             FROM transactions t
-             JOIN accounts a ON a.id = t.account_id
-             JOIN accounts target ON target.id = t.transfer_account_id
-             WHERE t.posted_on BETWEEN ?1 AND ?2 AND t.amount_cents < 0
-               AND target.kind IN ({kinds}) AND {}",
-            scope.sql()
-        ),
-        params![from, to],
-        |r| r.get(0),
-    )?)
+    crate::transactions::saved_between(conn, &from, &to, scope)
 }
 
 /// Whether a month had any transactions at all, so empty months don't drag
@@ -355,8 +392,6 @@ fn debt_payments(conn: &Connection, scope: Scope) -> Result<Vec<FixedPayment>> {
 pub fn draft(conn: &Connection, month: &str, scope: Scope) -> Result<BudgetDraft> {
     let month = parse_month(month)?;
 
-    let mut income_total = 0;
-    let mut income_months = 0;
     let mut saved_total = 0;
     let mut months_of_data = 0;
     for back in 1..=LOOKBACK_MONTHS {
@@ -366,13 +401,10 @@ pub fn draft(conn: &Connection, month: &str, scope: Scope) -> Result<BudgetDraft
         }
         months_of_data += 1;
         saved_total += saved_in(conn, &m, scope)?;
-        let income = income_for(conn, &m, scope)?;
-        if income > 0 {
-            income_total += income;
-            income_months += 1;
-        }
     }
-    let monthly_income_cents = if income_months > 0 { income_total / income_months } else { 0 };
+    // Income over a longer window than spending, for the same reason the
+    // dashboard does: pay arrives in lumps.
+    let monthly_income_cents = income_baseline(conn, &month, scope)?.typical_monthly_cents;
     let saving_investing_cents = if months_of_data > 0 { saved_total / months_of_data as i64 } else { 0 };
 
     let averages = recent_averages(conn, &month, scope)?;
@@ -610,6 +642,51 @@ mod tests {
         set_limits(&mut c, "2026-09", &limits).unwrap();
         let view = month_view(&c, "2026-09", Scope::Real).unwrap();
         assert_eq!(view.total_limit_cents, d.suggested_total_cents);
+    }
+
+    #[test]
+    fn income_baseline_stands_in_for_a_month_that_hasnt_been_paid_yet() {
+        let mut c = conn();
+        let a = accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let pay = |date: &str, cents: i64| {
+            let mut t = tx(a.id, date, cents, "Payroll");
+            t.category_id = Some(cat(&c, "Income"));
+            transactions::create(&c, &t).unwrap();
+        };
+        // Paid on the last day of each month, so October's calendar month
+        // shows nothing even though September 30th's pay covers it.
+        pay("2026-07-31", 400_000);
+        pay("2026-08-31", 400_000);
+        pay("2026-09-30", 400_000);
+
+        let b = income_baseline(&c, "2026-10", Scope::Real).unwrap();
+        assert_eq!(b.received_cents, 0, "nothing has landed in October yet");
+        assert_eq!(b.typical_monthly_cents, 400_000);
+        assert_eq!(b.months_of_data, 3);
+        assert!(b.estimated);
+        assert_eq!(b.expected_cents, 400_000, "measure against what you usually bring in");
+
+        // A month that has been paid uses the real figure, not the average.
+        let b = income_baseline(&c, "2026-09", Scope::Real).unwrap();
+        assert_eq!(b.received_cents, 400_000);
+        assert!(!b.estimated);
+        assert_eq!(b.expected_cents, 400_000);
+
+        // A better-than-usual month isn't talked down to the average.
+        pay("2026-10-15", 900_000);
+        let b = income_baseline(&c, "2026-10", Scope::Real).unwrap();
+        assert_eq!(b.received_cents, 900_000);
+        assert!(!b.estimated);
+        assert_eq!(b.expected_cents, 900_000);
+    }
+
+    #[test]
+    fn income_baseline_without_history_doesnt_invent_income() {
+        let mut c = conn();
+        accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let b = income_baseline(&c, "2026-10", Scope::Real).unwrap();
+        assert_eq!((b.typical_monthly_cents, b.months_of_data, b.expected_cents), (0, 0, 0));
+        assert!(!b.estimated, "with nothing to average, there's nothing to estimate from");
     }
 
     #[test]

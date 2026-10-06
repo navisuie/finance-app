@@ -126,6 +126,10 @@ export interface PeriodSummary {
   incomeCents: number;
   spendingCents: number;
   transactionCount: number;
+  /** Money moved into savings, brokerage or retirement accounts. */
+  savedCents: number;
+  /** How much of spendingCents has no category — the usual reason a rate looks wrong. */
+  uncategorizedSpendingCents: number;
 }
 
 export type AmountMapping =
@@ -233,6 +237,10 @@ export interface DebtSummary {
   payments: PaymentsSince;
   /** Payments tagged as paying this debt, newest first. */
   recentPayments: LinkedPayment[];
+  /** True when the app keeps this balance up to date from tagged payments. */
+  autoTracked: boolean;
+  /** The statement balance the running total is counted from. */
+  anchoredOn: string | null;
   estimatedInterestCents: number;
   suggestedBalanceCents: number | null;
   projection: Projection;
@@ -293,6 +301,18 @@ export interface BudgetDraft {
   lines: PlanLine[];
   suggestedTotalCents: number;
   leftoverCents: number;
+}
+
+/** What a month's income looks like against what you usually bring in. */
+export interface IncomeBaseline {
+  month: string;
+  typicalMonthlyCents: number;
+  monthsOfData: number;
+  receivedCents: number;
+  /** What to measure a savings rate against. */
+  expectedCents: number;
+  /** True when expectedCents is the typical figure, not what has landed. */
+  estimated: boolean;
 }
 
 export interface LimitInput {

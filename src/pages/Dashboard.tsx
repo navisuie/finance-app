@@ -6,7 +6,7 @@ import { Button, Card } from "../components/ui";
 import { useAsync } from "../hooks/useAsync";
 import { api } from "../lib/api";
 import type { BudgetMonth } from "../lib/types";
-import { formatDate, monthRange } from "../lib/money";
+import { formatCents, formatDate, monthRange } from "../lib/money";
 
 export function Dashboard({
   onNavigate,
@@ -18,6 +18,7 @@ export function Dashboard({
   const nw = useAsync(() => api.netWorth(), []);
   const accounts = useAsync(() => api.listAccounts(false), []);
   const month = useAsync(() => api.periodSummary(from, to), [from, to]);
+  const income = useAsync(() => api.incomeBaseline(from.slice(0, 7)), [from]);
   const recent = useAsync(() => api.queryTransactions({ limit: 10 }), []);
   const uncategorized = useAsync(() => api.queryTransactions({ categoryId: 0, limit: 1 }), []);
   const transfers = useAsync(() => api.listTransferCandidates(), []);
@@ -26,9 +27,13 @@ export function Dashboard({
   const goals = useAsync(() => api.listGoals(), []);
 
   const monthName = new Date().toLocaleDateString("en-US", { month: "long" });
+  // Pay arrives in lumps — a paycheck landing on the 31st counts in the next
+  // month — so the rate is measured against what you usually bring in when
+  // this month is still behind it.
+  const expectedIncome = income.data?.expectedCents ?? month.data?.incomeCents ?? 0;
   const savingsRate =
-    month.data && month.data.incomeCents > 0
-      ? Math.round(((month.data.incomeCents - month.data.spendingCents) / month.data.incomeCents) * 100)
+    month.data && expectedIncome > 0
+      ? Math.round(((expectedIncome - month.data.spendingCents) / expectedIncome) * 100)
       : null;
   const noAccounts = accounts.data && accounts.data.length === 0;
   const stale = (accounts.data ?? []).filter((a) => {
@@ -68,10 +73,42 @@ export function Dashboard({
           </p>
         </Card>
         <Card title={`Savings rate in ${monthName}`}>
-          <p className="text-3xl font-semibold tabular-nums">{savingsRate === null ? "—" : `${savingsRate}%`}</p>
-          <p className="mt-1 text-xs text-zinc-500">
-            {savingsRate === null ? "Categorize a paycheck as Income to see this." : "Share of income you didn't spend. Transfers are excluded."}
+          <p
+            className={`text-3xl font-semibold tabular-nums ${
+              savingsRate !== null && savingsRate < 0 ? "text-red-600 dark:text-red-500" : ""
+            }`}
+          >
+            {savingsRate === null ? "—" : `${savingsRate}%`}
           </p>
+          {month.data && savingsRate !== null ? (
+            <p className="mt-1 text-xs text-zinc-500">
+              {income.data?.estimated ? "Expected income" : "Income"} <Money cents={expectedIncome} /> · spent so far{" "}
+              <Money cents={month.data.spendingCents} /> · saved &amp; invested{" "}
+              <Money cents={month.data.savedCents} />
+            </p>
+          ) : null}
+          {income.data?.estimated ? (
+            <p className="mt-1 text-xs text-zinc-500">
+              Estimated from the last {income.data.monthsOfData} month{income.data.monthsOfData === 1 ? "" : "s"} you
+              were paid, because only <Money cents={income.data.receivedCents} /> has landed in {monthName} so far.
+            </p>
+          ) : null}
+          {savingsRate === null ? (
+            <p className="mt-1 text-xs text-zinc-500">Categorize a paycheck as Income to see this.</p>
+          ) : savingsRate < 0 && month.data ? (
+            <button
+              className="mt-1 text-left text-xs text-amber-700 hover:underline dark:text-amber-500"
+              onClick={() => onNavigate("transactions")}
+            >
+              {month.data.uncategorizedSpendingCents > 0
+                ? `${formatCents(month.data.uncategorizedSpendingCents)} of this is uncategorized, so it counts as spending. Money moved to savings or investments only counts as saving once it's tagged as a transfer.`
+                : "Spending is above income this month. Check that money moved to savings or investments is tagged as a transfer, and that your pay is categorized as Income."}
+            </button>
+          ) : (
+            <p className="mt-1 text-xs text-zinc-500">
+              Share of income you didn't spend. Saving and investing count as saved, not spent.
+            </p>
+          )}
         </Card>
         <Card title="Needs attention">
           <ul className="space-y-1 text-sm">

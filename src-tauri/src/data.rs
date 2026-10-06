@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use finance_core::accounts::{
     self, Account, AccountInput, BalanceSnapshot, NetWorth, NetWorthPoint, Scope, TestDataSummary,
 };
-use finance_core::budgets::{self, BudgetDraft, BudgetMonth, LimitInput};
+use finance_core::budgets::{self, BudgetDraft, BudgetMonth, IncomeBaseline, LimitInput};
 use finance_core::goals::{self, Goal, GoalInput};
 use finance_core::plaid::api::Environment;
 use finance_core::plaid::config;
@@ -94,7 +94,12 @@ pub fn set_balance(
     as_of: String,
     amount_cents: i64,
 ) -> CmdResult<Account> {
-    Ok(state.with_session(|s| accounts::set_balance(s.conn(), account_id, &as_of, amount_cents))?)
+    Ok(state.with_session(|s| {
+        accounts::set_balance(s.conn(), account_id, &as_of, amount_cents)?;
+        // A statement balance re-anchors a debt's running total.
+        debt::refresh_auto_balance(s.conn(), account_id)?;
+        accounts::get(s.conn(), account_id)
+    })?)
 }
 
 #[tauri::command]
@@ -148,6 +153,14 @@ pub fn set_budget(
         budgets::set_limit(s.conn(), category_id, &month, limit_cents)?;
         budgets::month_view(s.conn(), &month, scope)
     })?)
+}
+
+/// Average monthly income before `month`, and what this month's savings
+/// rate should be measured against.
+#[tauri::command]
+pub fn income_baseline(state: State<'_, AppState>, month: String) -> CmdResult<IncomeBaseline> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| budgets::income_baseline(s.conn(), &month, scope))?)
 }
 
 /// A suggested budget for `month`, derived from the months before it.
@@ -239,7 +252,12 @@ pub fn query_transactions(
 
 #[tauri::command]
 pub fn create_transaction(state: State<'_, AppState>, input: TransactionInput) -> CmdResult<Transaction> {
-    Ok(state.with_session(|s| transactions::create(s.conn(), &input))?)
+    Ok(state.with_session(|s| {
+        let t = transactions::create(s.conn(), &input)?;
+        // A payment tagged to a debt moves that debt's balance.
+        debt::refresh_all_auto_balances(s.conn())?;
+        Ok(t)
+    })?)
 }
 
 #[tauri::command]
@@ -248,12 +266,21 @@ pub fn update_transaction(
     id: i64,
     input: TransactionInput,
 ) -> CmdResult<Transaction> {
-    Ok(state.with_session(|s| transactions::update(s.conn(), id, &input))?)
+    Ok(state.with_session(|s| {
+        let t = transactions::update(s.conn(), id, &input)?;
+        debt::refresh_all_auto_balances(s.conn())?;
+        Ok(t)
+    })?)
 }
 
 #[tauri::command]
 pub fn delete_transactions(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<usize> {
-    Ok(state.with_session(|s| transactions::delete_many(s.conn_mut(), &ids))?)
+    Ok(state.with_session(|s| {
+        let n = transactions::delete_many(s.conn_mut(), &ids)?;
+        // Removing a payment puts that much back on the debt.
+        debt::refresh_all_auto_balances(s.conn())?;
+        Ok(n)
+    })?)
 }
 
 #[tauri::command]
@@ -342,7 +369,11 @@ pub async fn import_commit(
 ) -> CmdResult<ImportResult> {
     blocking(app, move |state| {
         state.with_session(|s| {
-            import::commit(s.conn_mut(), account_id, &text, &mapping, &lines, &category_overrides)
+            let r =
+                import::commit(s.conn_mut(), account_id, &text, &mapping, &lines, &category_overrides)?;
+            // Imported payments tagged to a debt move its balance.
+            debt::refresh_all_auto_balances(s.conn())?;
+            Ok(r)
         })
     })
     .await

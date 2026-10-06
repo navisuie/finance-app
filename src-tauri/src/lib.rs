@@ -73,6 +73,7 @@ pub fn run() {
             data::budget_month,
             data::set_budget,
             data::budget_draft,
+            data::income_baseline,
             data::apply_budget_plan,
             data::copy_budgets,
             data::list_goals,
