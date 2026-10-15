@@ -57,10 +57,10 @@ export function RetirementFields<T extends RetirementInput>({ input, set }: { in
         }
       />
       <MoneyField label="Your monthly contribution" cents={input.monthlyContributionCents} onChange={(v) => set("monthlyContributionCents", v)} />
-      <NumberField label="Employer match (%)" value={input.employerMatchPct} onChange={(v) => set("employerMatchPct", v)} step={5} min={0} max={200} hint="Applied on top of your contribution." />
-      <NumberField label="Expected return (%/yr)" value={input.expectedReturnPct} onChange={(v) => set("expectedReturnPct", v)} step={0.5} />
-      <NumberField label="Inflation (%/yr)" value={input.inflationPct} onChange={(v) => set("inflationPct", v)} step={0.5} />
-      <NumberField label="Withdrawal rate (%)" value={input.withdrawalRatePct} onChange={(v) => set("withdrawalRatePct", v)} step={0.5} min={0.5} />
+      <NumberField label="Employer match (%)" value={input.employerMatchPct} onChange={(v) => set("employerMatchPct", v)} min={0} max={200} hint="Applied on top of your contribution." />
+      <NumberField label="Expected return (%/yr)" value={input.expectedReturnPct} onChange={(v) => set("expectedReturnPct", v)} />
+      <NumberField label="Inflation (%/yr)" value={input.inflationPct} onChange={(v) => set("inflationPct", v)} />
+      <NumberField label="Withdrawal rate (%)" value={input.withdrawalRatePct} onChange={(v) => set("withdrawalRatePct", v)} min={0.5} />
       <div className="col-span-2">
         <MoneyField label="Desired annual retirement income (today's $)" cents={input.desiredAnnualIncomeCents} onChange={(v) => set("desiredAnnualIncomeCents", v)} />
       </div>

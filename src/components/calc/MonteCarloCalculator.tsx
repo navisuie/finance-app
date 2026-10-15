@@ -26,7 +26,6 @@ export function MonteCarloCalculator() {
             label="Return volatility (%/yr)"
             value={input.returnVolatilityPct}
             onChange={(v) => setInput((i) => ({ ...i, returnVolatilityPct: v }))}
-            step={1}
             min={0}
             hint="Higher volatility widens the range of outcomes below."
           />

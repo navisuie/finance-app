@@ -34,7 +34,7 @@ export function SavingsGoalCalculator() {
           <MoneyField label="Target amount" cents={input.targetCents} onChange={(v) => set("targetCents", v)} />
           <Field label="Target date" type="date" min={todayISO()} value={input.targetDate} onChange={(e) => set("targetDate", e.target.value)} />
           <MoneyField label="Current savings" cents={input.currentSavingsCents} onChange={(v) => set("currentSavingsCents", v)} />
-          <NumberField label="HYSA APY (%)" value={input.hysaApyPct} onChange={(v) => set("hysaApyPct", v)} step={0.1} min={0} />
+          <NumberField label="HYSA APY (%)" value={input.hysaApyPct} onChange={(v) => set("hysaApyPct", v)} min={0} />
           <div className="col-span-2">
             <MoneyField label="What you deposit monthly today" cents={input.currentMonthlyDepositCents} onChange={(v) => set("currentMonthlyDepositCents", v)} />
           </div>

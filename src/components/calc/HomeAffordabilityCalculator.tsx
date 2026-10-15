@@ -39,9 +39,9 @@ export function HomeAffordabilityCalculator() {
           <MoneyField label="Gross annual income" cents={input.grossAnnualIncomeCents} onChange={(v) => set("grossAnnualIncomeCents", v)} />
           <MoneyField label="Other monthly debts" cents={input.monthlyDebtsCents} onChange={(v) => set("monthlyDebtsCents", v)} />
           <MoneyField label="Down payment" cents={input.downPaymentCents} onChange={(v) => set("downPaymentCents", v)} />
-          <NumberField label="Mortgage rate (%)" value={input.mortgageRatePct} onChange={(v) => set("mortgageRatePct", v)} step={0.1} />
-          <NumberField label="Term (years)" value={input.termYears} onChange={(v) => set("termYears", v)} step={5} min={1} max={40} />
-          <NumberField label="Property tax (%/yr)" value={input.propertyTaxPct} onChange={(v) => set("propertyTaxPct", v)} step={0.1} />
+          <NumberField label="Mortgage rate (%)" value={input.mortgageRatePct} onChange={(v) => set("mortgageRatePct", v)} />
+          <NumberField label="Term (years)" value={input.termYears} onChange={(v) => set("termYears", v)} min={1} max={40} />
+          <NumberField label="Property tax (%/yr)" value={input.propertyTaxPct} onChange={(v) => set("propertyTaxPct", v)} />
           <MoneyField label="Insurance (monthly)" cents={input.monthlyInsuranceCents} onChange={(v) => set("monthlyInsuranceCents", v)} />
           <MoneyField label="HOA (monthly)" cents={input.monthlyHoaCents} onChange={(v) => set("monthlyHoaCents", v)} />
         </div>

@@ -6,6 +6,7 @@ import { Button, Card } from "../components/ui";
 import { useAsync } from "../hooks/useAsync";
 import { api } from "../lib/api";
 import type { BudgetMonth } from "../lib/types";
+import { needsAttention } from "../lib/connections";
 import { formatCents, formatDate, monthRange } from "../lib/money";
 
 export function Dashboard({
@@ -22,6 +23,12 @@ export function Dashboard({
   const recent = useAsync(() => api.queryTransactions({ limit: 10 }), []);
   const uncategorized = useAsync(() => api.queryTransactions({ categoryId: 0, limit: 1 }), []);
   const transfers = useAsync(() => api.listTransferCandidates(), []);
+  // Only the active environment's banks: a stale Sandbox connection is no
+  // reason to nag while you're looking at real data.
+  const banks = useAsync(async () => {
+    const [st, items] = await Promise.all([api.plaidStatus(), api.plaidListItems()]);
+    return items.filter((i) => i.environment === st.environment && needsAttention(i));
+  }, []);
   const history = useAsync(() => api.netWorthHistory(13), []);
   const budgets = useAsync(() => api.budgetMonth(from.slice(0, 7)), [from]);
   const goals = useAsync(() => api.listGoals(), []);
@@ -126,6 +133,15 @@ export function Dashboard({
                 </button>
               </li>
             ) : null}
+            {banks.data && banks.data.length > 0 ? (
+              <li>
+                <button className="text-left text-amber-700 hover:underline dark:text-amber-500" onClick={() => onNavigate("accounts")}>
+                  {banks.data.length === 1
+                    ? `${banks.data[0].institutionName} isn't syncing — sign in again`
+                    : `${banks.data.length} bank connections aren't syncing — sign in again`}
+                </button>
+              </li>
+            ) : null}
             {transfers.data && transfers.data.length > 0 ? (
               <li>
                 <button className="text-left hover:underline" onClick={() => onNavigate("transactions")}>
@@ -133,7 +149,10 @@ export function Dashboard({
                 </button>
               </li>
             ) : null}
-            {uncategorized.data?.total === 0 && stale.length === 0 && (transfers.data?.length ?? 0) === 0 ? (
+            {uncategorized.data?.total === 0 &&
+            stale.length === 0 &&
+            (transfers.data?.length ?? 0) === 0 &&
+            (banks.data?.length ?? 0) === 0 ? (
               <li className="text-zinc-500">All caught up.</li>
             ) : null}
           </ul>

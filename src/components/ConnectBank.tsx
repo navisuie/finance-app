@@ -18,7 +18,7 @@ type Step =
   | { s: "waiting"; start: LinkStart }
   | { s: "map"; itemId: number; name: string }
   | { s: "done"; sync: SyncResult }
-  | { s: "reconnected"; name: string };
+  | { s: "reconnected"; name: string; itemId: number | null };
 
 export function ConnectBank({
   mode,
@@ -94,7 +94,11 @@ export function ConnectBank({
           setStep({ s: "map", itemId: r.itemId, name: r.institutionName });
         } else if (r.state === "reconnected") {
           changedRef.current();
-          setStep({ s: "reconnected", name: mode.type === "reconnect" ? mode.name : "Your bank" });
+          setStep({
+            s: "reconnected",
+            name: mode.type === "reconnect" ? mode.name : "Your bank",
+            itemId: mode.type === "reconnect" ? mode.itemId : null,
+          });
         } else if (r.state === "exited") {
           setError(r.message);
           setStep({ s: "choose" });
@@ -238,15 +242,64 @@ export function ConnectBank({
       ) : null}
 
       {step.s === "reconnected" ? (
-        <div className="space-y-4">
-          <p className="text-lg font-medium">{step.name} is reconnected</p>
-          <p className="text-sm text-zinc-500">Syncing works again. Use Sync to pull the latest data.</p>
-          <div className="flex justify-end">
-            <Button onClick={onClose}>Done</Button>
-          </div>
-        </div>
+        <Reconnected name={step.name} itemId={step.itemId} onClose={onClose} onSynced={() => changedRef.current()} />
       ) : null}
     </Modal>
+  );
+}
+
+/** After signing in again, pull fresh data straight away rather than
+ * leaving the user to find the Sync button. */
+function Reconnected({
+  name,
+  itemId,
+  onClose,
+  onSynced,
+}: {
+  name: string;
+  itemId: number | null;
+  onClose: () => void;
+  onSynced: () => void;
+}) {
+  const [state, setState] = useState<{ s: "syncing" } | { s: "synced"; summary: string } | { s: "failed"; error: string }>(
+    { s: "syncing" },
+  );
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (itemId === null || started.current) return;
+    started.current = true;
+    api
+      .plaidSyncItem(itemId)
+      .then((r) => {
+        const t = r.transactions;
+        setState({
+          s: "synced",
+          summary: `${t.added} new, ${t.modified} updated${r.historyPending ? " · more history still loading" : ""}.`,
+        });
+        onSynced();
+      })
+      .catch((e) => setState({ s: "failed", error: errorMessage(e) }));
+  }, [itemId, onSynced]);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-lg font-medium">{name} is reconnected</p>
+      {itemId === null ? (
+        <p className="text-sm text-zinc-500">Use Sync to pull the latest data.</p>
+      ) : state.s === "syncing" ? (
+        <p className="text-sm text-zinc-500">Pulling the latest data…</p>
+      ) : state.s === "synced" ? (
+        <p className="text-sm text-zinc-500">Synced: {state.summary}</p>
+      ) : (
+        <p className="text-sm text-red-600">Signed in, but the sync that followed failed: {state.error}</p>
+      )}
+      <div className="flex justify-end">
+        <Button onClick={onClose} disabled={state.s === "syncing" && itemId !== null}>
+          Done
+        </Button>
+      </div>
+    </div>
   );
 }
 

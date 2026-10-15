@@ -60,7 +60,6 @@ export function BudgetPlanCalculator() {
             label="Withheld (%)"
             value={input.taxRatePct}
             onChange={(v) => set("taxRatePct", v)}
-            step={1}
             min={0}
             max={99}
             hint="Taxes, payroll deductions, premiums."
@@ -130,9 +129,9 @@ export function BudgetPlanCalculator() {
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-3">
-          <NumberField label="Needs (%)" value={input.needsPct} onChange={(v) => set("needsPct", v)} step={5} min={0} max={100} />
-          <NumberField label="Wants (%)" value={input.wantsPct} onChange={(v) => set("wantsPct", v)} step={5} min={0} max={100} />
-          <NumberField label="Savings (%)" value={input.savingsPct} onChange={(v) => set("savingsPct", v)} step={5} min={0} max={100} />
+          <NumberField label="Needs (%)" value={input.needsPct} onChange={(v) => set("needsPct", v)} min={0} max={100} />
+          <NumberField label="Wants (%)" value={input.wantsPct} onChange={(v) => set("wantsPct", v)} min={0} max={100} />
+          <NumberField label="Savings (%)" value={input.savingsPct} onChange={(v) => set("savingsPct", v)} min={0} max={100} />
         </div>
 
         <ScenarioBar calculator="budget_plan" input={input} onLoad={setInput} />

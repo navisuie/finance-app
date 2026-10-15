@@ -31,15 +31,15 @@ export function RentVsBuyCalculator() {
       <Card title="Inputs">
         <div className="grid grid-cols-2 gap-3">
           <MoneyField label="Monthly rent" cents={input.monthlyRentCents} onChange={(v) => set("monthlyRentCents", v)} />
-          <NumberField label="Rent growth (%/yr)" value={input.annualRentGrowthPct} onChange={(v) => set("annualRentGrowthPct", v)} step={0.5} />
+          <NumberField label="Rent growth (%/yr)" value={input.annualRentGrowthPct} onChange={(v) => set("annualRentGrowthPct", v)} />
           <MoneyField label="Home price" cents={input.homePriceCents} onChange={(v) => set("homePriceCents", v)} />
           <MoneyField label="Down payment" cents={input.downPaymentCents} onChange={(v) => set("downPaymentCents", v)} />
-          <NumberField label="Mortgage rate (%)" value={input.mortgageRatePct} onChange={(v) => set("mortgageRatePct", v)} step={0.1} />
-          <NumberField label="Term (years)" value={input.termYears} onChange={(v) => set("termYears", v)} step={5} min={1} max={40} />
-          <NumberField label="Maintenance (%/yr of value)" value={input.maintenancePct} onChange={(v) => set("maintenancePct", v)} step={0.1} />
-          <NumberField label="Appreciation (%/yr)" value={input.annualAppreciationPct} onChange={(v) => set("annualAppreciationPct", v)} step={0.5} />
-          <NumberField label="Years you'll stay" value={input.yearsStaying} onChange={(v) => set("yearsStaying", v)} step={1} min={1} max={40} />
-          <NumberField label="Investment return (%/yr)" value={input.investmentReturnPct} onChange={(v) => set("investmentReturnPct", v)} step={0.5} />
+          <NumberField label="Mortgage rate (%)" value={input.mortgageRatePct} onChange={(v) => set("mortgageRatePct", v)} />
+          <NumberField label="Term (years)" value={input.termYears} onChange={(v) => set("termYears", v)} min={1} max={40} />
+          <NumberField label="Maintenance (%/yr of value)" value={input.maintenancePct} onChange={(v) => set("maintenancePct", v)} />
+          <NumberField label="Appreciation (%/yr)" value={input.annualAppreciationPct} onChange={(v) => set("annualAppreciationPct", v)} />
+          <NumberField label="Years you'll stay" value={input.yearsStaying} onChange={(v) => set("yearsStaying", v)} min={1} max={40} />
+          <NumberField label="Investment return (%/yr)" value={input.investmentReturnPct} onChange={(v) => set("investmentReturnPct", v)} />
         </div>
         <ScenarioBar calculator="rent_vs_buy" input={input} onLoad={setInput} />
       </Card>

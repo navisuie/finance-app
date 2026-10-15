@@ -40,7 +40,7 @@ export function DebtPayoffCalculator() {
                 </div>
                 <MoneyField label="Balance" cents={d.balanceCents} onChange={(v) => updateDebt(i, { balanceCents: v })} />
                 <MoneyField label="Minimum payment" cents={d.minimumPaymentCents} onChange={(v) => updateDebt(i, { minimumPaymentCents: v })} />
-                <NumberField label="APR (%)" value={d.aprBps / 100} onChange={(v) => updateDebt(i, { aprBps: Math.round(v * 100) })} step={0.1} min={0} />
+                <NumberField label="APR (%)" value={d.aprBps / 100} onChange={(v) => updateDebt(i, { aprBps: Math.round(v * 100) })} min={0} />
               </div>
               <Button variant="ghost" className="mt-6 px-2 py-1 text-red-600" onClick={() => removeDebt(i)} aria-label={`Remove ${d.name}`}>
                 ✕

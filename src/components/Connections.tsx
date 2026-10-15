@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, errorMessage } from "../lib/api";
 import { announceEnvironmentChange } from "../hooks/usePlaidStatus";
+import { connectionHealth } from "../lib/connections";
 import type { PlaidItem, PlaidStatus } from "../lib/types";
 import { useConfirm } from "./Confirm";
 import { ConnectBank, type ConnectMode } from "./ConnectBank";
@@ -148,6 +149,7 @@ export function Connections({
       ) : (
         <div className="divide-y divide-zinc-100 rounded-xl bg-white ring-1 ring-zinc-200 dark:divide-zinc-800 dark:bg-zinc-900 dark:ring-zinc-800">
           {visible.map((item) => {
+            const health = connectionHealth(item);
             return (
               <div key={item.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
                 <div className="min-w-0 flex-1">
@@ -159,10 +161,21 @@ export function Connections({
                     {item.linkedAccountCount} account{item.linkedAccountCount === 1 ? "" : "s"} · synced {ago(item.lastSyncedAt)}
                     {item.products.includes("investments") ? " · investments" : ""}
                   </p>
-                  {item.status === "needs_reauth" ? (
-                    <p className="text-xs text-amber-700 dark:text-amber-300">Sign-in needed: {item.lastError}</p>
-                  ) : item.status === "error" && item.lastError ? (
-                    <p className="text-xs text-red-600">{item.lastError}</p>
+                  {health.kind === "needs_reauth" ? (
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      Sign-in needed{health.message ? `: ${health.message}` : "."}
+                    </p>
+                  ) : health.kind === "error" ? (
+                    <p className="text-xs text-red-600">
+                      {health.message ?? "The last sync failed."} If it keeps failing, sign in again.
+                    </p>
+                  ) : health.kind === "stale" ? (
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      {health.days === null
+                        ? "Hasn't synced successfully yet."
+                        : `Hasn't synced successfully in ${health.days} days.`}{" "}
+                      Signing in again usually fixes a connection that has quietly gone stale.
+                    </p>
                   ) : null}
                   {messages[item.id] ? <p className="text-xs text-zinc-500">{messages[item.id]}</p> : null}
                 </div>
@@ -171,14 +184,20 @@ export function Connections({
                     Choose accounts
                   </Button>
                 ) : null}
-                {item.status === "needs_reauth" ? (
-                  <Button className="py-1" onClick={() => setConnect({ type: "reconnect", itemId: item.id, name: item.institutionName })}>
-                    Reconnect
-                  </Button>
-                ) : null}
                 {item.linkedAccountCount > 0 ? (
                   <>
-                    {item.status !== "needs_reauth" ? (
+                    {/* Sign in again is always on offer: Plaid only flags
+                        needs_reauth some of the time, and a connection can go
+                        stale with no error at all. It's the primary action
+                        whenever something looks wrong, a quiet one otherwise. */}
+                    <Button
+                      variant={health.kind === "ok" ? "ghost" : "primary"}
+                      className="py-1"
+                      onClick={() => setConnect({ type: "reconnect", itemId: item.id, name: item.institutionName })}
+                    >
+                      Sign in again
+                    </Button>
+                    {health.kind !== "needs_reauth" ? (
                       <Button variant="secondary" className="py-1" disabled={syncing.has(item.id)} onClick={() => sync(item)}>
                         {syncing.has(item.id) ? "Syncing…" : "Sync"}
                       </Button>
