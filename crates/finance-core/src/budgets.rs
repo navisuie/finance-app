@@ -453,6 +453,102 @@ pub fn draft(conn: &Connection, month: &str, scope: Scope) -> Result<BudgetDraft
     })
 }
 
+// --------------------------------------------------- saving & investing
+
+/// Settings key for the monthly saving & investing target, in cents. One
+/// standing figure ("I put away $1,500 a month") rather than a per-month
+/// limit like the spending categories: it's a habit, not a month-by-month
+/// allowance.
+pub const SAVING_TARGET_KEY: &str = "saving_target_cents";
+
+/// Cash savings; every other kind in `SAVING_KINDS` counts as investing.
+const CASH_SAVING_KINDS: &[&str] = &["savings", "hysa"];
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedToAccount {
+    pub account_id: i64,
+    pub account_name: String,
+    pub kind: String,
+    /// False for cash savings (savings, HYSA).
+    pub investing: bool,
+    pub cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavingMonth {
+    pub month: String,
+    /// Where the money went, biggest first.
+    pub accounts: Vec<SavedToAccount>,
+    pub total_cents: i64,
+    pub investing_cents: i64,
+    pub cash_savings_cents: i64,
+    pub target_cents: Option<i64>,
+    /// The income the dashboard's savings rate is measured against (what
+    /// you usually bring in when this month hasn't been paid yet), so the
+    /// share shown here agrees with it.
+    pub expected_income_cents: i64,
+}
+
+/// What was moved into savings and investment accounts in `month`, account
+/// by account. Counts the money leaving the source account only, so a
+/// transfer tagged on both sides isn't counted twice.
+pub fn saving_month(conn: &Connection, month: &str, scope: Scope) -> Result<SavingMonth> {
+    let month = parse_month(month)?;
+    let (from, to) = month_range(&month)?;
+    let kinds = crate::transactions::SAVING_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
+    let mut stmt = conn.prepare(&format!(
+        "SELECT target.id, target.name, target.kind, sum(-t.amount_cents)
+         FROM transactions t
+         JOIN accounts a ON a.id = t.account_id
+         JOIN accounts target ON target.id = t.transfer_account_id
+         WHERE t.posted_on BETWEEN ?1 AND ?2 AND t.amount_cents < 0
+           AND target.kind IN ({kinds}) AND {}
+         GROUP BY target.id
+         ORDER BY 4 DESC, target.name COLLATE NOCASE",
+        scope.sql()
+    ))?;
+    let accounts: Vec<SavedToAccount> = stmt
+        .query_map(params![from, to], |r| {
+            let kind: String = r.get(2)?;
+            Ok(SavedToAccount {
+                account_id: r.get(0)?,
+                account_name: r.get(1)?,
+                investing: !CASH_SAVING_KINDS.contains(&kind.as_str()),
+                kind,
+                cents: r.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    let investing_cents = accounts.iter().filter(|a| a.investing).map(|a| a.cents).sum();
+    let cash_savings_cents = accounts.iter().filter(|a| !a.investing).map(|a| a.cents).sum();
+    Ok(SavingMonth {
+        target_cents: crate::settings::get(conn, SAVING_TARGET_KEY)?
+            .and_then(|v| v.parse().ok())
+            .filter(|c: &i64| *c > 0),
+        expected_income_cents: income_baseline(conn, &month, scope)?.expected_cents,
+        total_cents: investing_cents + cash_savings_cents,
+        investing_cents,
+        cash_savings_cents,
+        accounts,
+        month,
+    })
+}
+
+/// Set the monthly saving & investing target. 0 removes it.
+pub fn set_saving_target(conn: &Connection, cents: i64) -> Result<()> {
+    if !(0..=crate::transactions::MAX_AMOUNT_CENTS).contains(&cents) {
+        return Err(CoreError::Invalid("That target doesn't look right.".into()));
+    }
+    if cents == 0 {
+        conn.execute("DELETE FROM settings WHERE key = ?1", [SAVING_TARGET_KEY])?;
+        return Ok(());
+    }
+    crate::settings::set(conn, SAVING_TARGET_KEY, &cents.to_string())
+}
+
 /// Apply a whole set of limits to a month at once. A limit of 0 clears that
 /// category, same as `set_limit`.
 pub fn set_limits(conn: &mut Connection, month: &str, limits: &[LimitInput]) -> Result<usize> {
@@ -642,6 +738,104 @@ mod tests {
         set_limits(&mut c, "2026-09", &limits).unwrap();
         let view = month_view(&c, "2026-09", Scope::Real).unwrap();
         assert_eq!(view.total_limit_cents, d.suggested_total_cents);
+    }
+
+    #[test]
+    fn saving_month_breaks_down_by_account_and_tracks_a_target() {
+        let mut c = conn();
+        let checking = accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let brokerage = accounts::create(&mut c, &input("Fidelity brokerage", "brokerage")).unwrap();
+        let roth = accounts::create(&mut c, &input("Fidelity Roth IRA", "roth_ira")).unwrap();
+        let hysa = accounts::create(&mut c, &input("Ally HYSA", "hysa")).unwrap();
+        let sandbox = accounts::create(&mut c, &input("Plaid Brokerage", "brokerage")).unwrap();
+        accounts::set_is_test(&c, sandbox.id, true).unwrap();
+        let fake_checking = accounts::create(&mut c, &input("Plaid Checking", "checking")).unwrap();
+        accounts::set_is_test(&c, fake_checking.id, true).unwrap();
+
+        let moved = |from: i64, date: &str, cents: i64, target: i64| {
+            let mut t = tx(from, date, cents, "Transfer");
+            t.transfer_account_id = Some(target);
+            transactions::create(&c, &t).unwrap();
+        };
+        moved(checking.id, "2026-10-01", -50_000, brokerage.id);
+        moved(checking.id, "2026-10-15", -25_000, brokerage.id);
+        moved(checking.id, "2026-10-02", -58_300, roth.id);
+        moved(checking.id, "2026-10-03", -20_000, hysa.id);
+        moved(checking.id, "2026-09-28", -99_000, brokerage.id); // another month
+        // The Fidelity side of the same transfer, also tagged: not counted again.
+        moved(brokerage.id, "2026-10-01", 50_000, checking.id);
+        // Sandbox data stays in its own world.
+        moved(fake_checking.id, "2026-10-04", -77_700, sandbox.id);
+
+        let s = saving_month(&c, "2026-10", Scope::Real).unwrap();
+        assert_eq!(s.total_cents, 75_000 + 58_300 + 20_000);
+        assert_eq!(s.investing_cents, 75_000 + 58_300);
+        assert_eq!(s.cash_savings_cents, 20_000);
+        assert_eq!(
+            s.accounts.iter().map(|a| (a.account_name.as_str(), a.cents, a.investing)).collect::<Vec<_>>(),
+            vec![
+                ("Fidelity brokerage", 75_000, true),
+                ("Fidelity Roth IRA", 58_300, true),
+                ("Ally HYSA", 20_000, false),
+            ],
+            "biggest first"
+        );
+        // Agrees with the dashboard's saved figure for the same month.
+        let (from, to) = month_range("2026-10").unwrap();
+        assert_eq!(s.total_cents, transactions::saved_between(&c, &from, &to, Scope::Real).unwrap());
+
+        // A standing target, applied to every month until it's changed.
+        assert_eq!(s.target_cents, None);
+        set_saving_target(&c, 150_000).unwrap();
+        assert_eq!(saving_month(&c, "2026-10", Scope::Real).unwrap().target_cents, Some(150_000));
+        assert_eq!(saving_month(&c, "2026-11", Scope::Real).unwrap().target_cents, Some(150_000));
+        set_saving_target(&c, 0).unwrap();
+        assert_eq!(saving_month(&c, "2026-10", Scope::Real).unwrap().target_cents, None);
+        assert!(set_saving_target(&c, -1).is_err());
+    }
+
+    #[test]
+    fn a_categorys_transactions_add_up_to_what_its_budget_counts() {
+        let mut c = conn();
+        let checking = accounts::create(&mut c, &input("Checking", "checking")).unwrap();
+        let card = accounts::create(&mut c, &input("Card", "credit_card")).unwrap();
+        let dining = cat(&c, "Dining");
+
+        spend(&c, checking.id, "2026-10-03", -4_500, "Dining");
+        spend(&c, card.id, "2026-10-09", -12_000, "Dining");
+        spend(&c, card.id, "2026-10-11", 2_000, "Dining"); // a refund
+        spend(&c, checking.id, "2026-10-12", -8_000, "Groceries"); // another category
+        spend(&c, checking.id, "2026-09-30", -9_900, "Dining"); // another month
+        // Tagged as a transfer but carrying the Dining category: the budget
+        // leaves it out, so the list must too.
+        let mut moved = tx(checking.id, "2026-10-15", -30_000, "Venmo");
+        moved.category_id = Some(dining);
+        moved.transfer_account_id = Some(card.id);
+        transactions::create(&c, &moved).unwrap();
+
+        let row_spent = month_view(&c, "2026-10", Scope::Real)
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| r.category_id == dining)
+            .unwrap()
+            .spent_cents;
+        assert_eq!(row_spent, 4_500 + 12_000 - 2_000);
+
+        let (from, to) = month_range("2026-10").unwrap();
+        let page = transactions::query(
+            &c,
+            &transactions::TransactionFilter {
+                category_id: Some(dining),
+                from: Some(from),
+                to: Some(to),
+                exclude_transfers: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page.total, 3, "the two charges and the refund, not the transfer");
+        assert_eq!(page.outflow_cents - page.inflow_cents, row_spent, "the list adds up to the bar");
     }
 
     #[test]

@@ -75,6 +75,8 @@ pub fn run() {
             data::budget_draft,
             data::income_baseline,
             data::apply_budget_plan,
+            data::saving_month,
+            data::set_saving_target,
             data::copy_budgets,
             data::list_goals,
             data::create_goal,

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { BudgetBuilder } from "../components/BudgetBuilder";
+import { CategoryTransactions } from "../components/CategoryTransactions";
 import { Meter } from "../components/Meter";
+import { SavingSection } from "../components/SavingSection";
 import { Money } from "../components/privacy";
 import { controlClass } from "../components/Select";
 import { Button, Card } from "../components/ui";
@@ -29,6 +31,7 @@ export function BudgetsPage() {
   const [data, setData] = useState<BudgetMonth>();
   const [error, setError] = useState<string>();
   const [building, setBuilding] = useState(false);
+  const [openRow, setOpenRow] = useState<BudgetRow>();
   const loaded = useAsync(() => api.budgetMonth(month), [month]);
 
   useEffect(() => {
@@ -132,6 +135,8 @@ export function BudgetsPage() {
         </Card>
       ) : null}
 
+      <SavingSection month={month} monthLabel={monthLabel(month)} isCurrentMonth={month === thisMonth()} />
+
       <div className="flex items-center justify-between px-1">
         <h2 className="text-sm font-semibold text-zinc-500">Categories</h2>
         <div className="flex items-center gap-2">
@@ -146,7 +151,7 @@ export function BudgetsPage() {
 
       <Card className="divide-y divide-zinc-100 dark:divide-zinc-800">
         {[...budgeted, ...others].map((row) => (
-          <BudgetLine key={row.categoryId} row={row} onSave={save} />
+          <BudgetLine key={row.categoryId} row={row} onSave={save} onOpen={setOpenRow} />
         ))}
         {d && d.rows.length === 0 ? (
           <p className="text-sm text-zinc-500">
@@ -154,6 +159,17 @@ export function BudgetsPage() {
           </p>
         ) : null}
       </Card>
+
+      {openRow ? (
+        <CategoryTransactions
+          categoryId={openRow.categoryId}
+          categoryName={openRow.categoryName}
+          month={month}
+          monthLabel={monthLabel(month)}
+          onClose={() => setOpenRow(undefined)}
+          onChanged={() => loaded.reload()}
+        />
+      ) : null}
 
       {building ? (
         <BudgetBuilder
@@ -167,7 +183,15 @@ export function BudgetsPage() {
   );
 }
 
-function BudgetLine({ row, onSave }: { row: BudgetRow; onSave: (categoryId: number, cents: number) => void }) {
+function BudgetLine({
+  row,
+  onSave,
+  onOpen,
+}: {
+  row: BudgetRow;
+  onSave: (categoryId: number, cents: number) => void;
+  onOpen: (row: BudgetRow) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(row.limitCents !== null ? centsToInput(row.limitCents) : "");
 
@@ -187,7 +211,13 @@ function BudgetLine({ row, onSave }: { row: BudgetRow; onSave: (categoryId: numb
     <div className="grid grid-cols-[1fr_auto] items-center gap-3 py-3 first:pt-0 last:pb-0">
       <div className="min-w-0">
         <div className="flex items-baseline justify-between gap-3">
-          <p className="font-medium">{row.categoryName}</p>
+          <button
+            className="min-w-0 truncate text-left font-medium hover:underline"
+            onClick={() => onOpen(row)}
+            title={`See what's counted in ${row.categoryName}`}
+          >
+            {row.categoryName}
+          </button>
           <p className="text-sm">
             <Money cents={row.spentCents} />
             {row.limitCents !== null ? (

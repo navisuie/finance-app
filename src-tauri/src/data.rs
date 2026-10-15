@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use finance_core::accounts::{
     self, Account, AccountInput, BalanceSnapshot, NetWorth, NetWorthPoint, Scope, TestDataSummary,
 };
-use finance_core::budgets::{self, BudgetDraft, BudgetMonth, IncomeBaseline, LimitInput};
+use finance_core::budgets::{self, BudgetDraft, BudgetMonth, IncomeBaseline, LimitInput, SavingMonth};
 use finance_core::goals::{self, Goal, GoalInput};
 use finance_core::plaid::api::Environment;
 use finance_core::plaid::config;
@@ -180,6 +180,24 @@ pub fn apply_budget_plan(
     Ok(state.with_session(|s| {
         budgets::set_limits(s.conn_mut(), &month, &limits)?;
         budgets::month_view(s.conn(), &month, scope)
+    })?)
+}
+
+/// What was moved into savings and investment accounts in `month`.
+#[tauri::command]
+pub fn saving_month(state: State<'_, AppState>, month: String) -> CmdResult<SavingMonth> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| budgets::saving_month(s.conn(), &month, scope))?)
+}
+
+/// Set the standing monthly saving & investing target (0 removes it), and
+/// return `month` with it applied.
+#[tauri::command]
+pub fn set_saving_target(state: State<'_, AppState>, month: String, cents: i64) -> CmdResult<SavingMonth> {
+    let scope = active_scope(&state)?;
+    Ok(state.with_session(|s| {
+        budgets::set_saving_target(s.conn(), cents)?;
+        budgets::saving_month(s.conn(), &month, scope)
     })?)
 }
 

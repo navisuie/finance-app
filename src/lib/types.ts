@@ -111,6 +111,8 @@ export interface TransactionFilter {
   search?: string;
   /** Defaults to the active environment's data (test in Sandbox, real in Production). */
   scope?: Scope;
+  /** Leave out tagged transfers, as spending and budget totals do. */
+  excludeTransfers?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -313,6 +315,28 @@ export interface IncomeBaseline {
   expectedCents: number;
   /** True when expectedCents is the typical figure, not what has landed. */
   estimated: boolean;
+}
+
+export interface SavedToAccount {
+  accountId: number;
+  accountName: string;
+  kind: AccountKind;
+  /** False for cash savings (savings, HYSA). */
+  investing: boolean;
+  cents: number;
+}
+
+/** What was moved into savings and investment accounts in a month. */
+export interface SavingMonth {
+  month: string;
+  /** Biggest first. */
+  accounts: SavedToAccount[];
+  totalCents: number;
+  investingCents: number;
+  cashSavingsCents: number;
+  targetCents: number | null;
+  /** The income the dashboard's savings rate is measured against. */
+  expectedIncomeCents: number;
 }
 
 export interface LimitInput {

@@ -7,6 +7,7 @@ import type {
   Category,
   BudgetMonth,
   BudgetDraft,
+  SavingMonth,
   IncomeBaseline,
   LimitInput,
   DebtSummary,
@@ -142,6 +143,9 @@ export const api = {
   copyBudgets: (from: string, to: string) => invoke<BudgetMonth>("copy_budgets", { from, to }),
   budgetDraft: (month: string) => invoke<BudgetDraft>("budget_draft", { month }),
   incomeBaseline: (month: string) => invoke<IncomeBaseline>("income_baseline", { month }),
+  savingMonth: (month: string) => invoke<SavingMonth>("saving_month", { month }),
+  /** The standing monthly target; 0 removes it. */
+  setSavingTarget: (month: string, cents: number) => invoke<SavingMonth>("set_saving_target", { month, cents }),
   applyBudgetPlan: (month: string, limits: LimitInput[]) =>
     invoke<BudgetMonth>("apply_budget_plan", { month, limits }),
 

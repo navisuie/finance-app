@@ -62,6 +62,10 @@ pub struct TransactionFilter {
     /// Which data set to cover; the app fills this in from the active Plaid
     /// environment when the UI doesn't ask for something specific.
     pub scope: Option<Scope>,
+    /// Leave out transactions tagged as a transfer to another account — the
+    /// same rule spending and budget totals use, so a list filtered this way
+    /// adds up to the figure it explains.
+    pub exclude_transfers: bool,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -264,6 +268,9 @@ pub fn set_category(conn: &mut Connection, ids: &[i64], category_id: Option<i64>
 fn where_clause(f: &TransactionFilter) -> Result<(String, Vec<Value>)> {
     let mut clauses = vec![f.scope.unwrap_or_default().sql().to_string()];
     let mut args: Vec<Value> = Vec::new();
+    if f.exclude_transfers {
+        clauses.push("t.transfer_account_id IS NULL".into());
+    }
     if let Some(a) = f.account_id {
         args.push(a.into());
         clauses.push(format!("t.account_id = ?{}", args.len()));
