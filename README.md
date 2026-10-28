@@ -1,48 +1,75 @@
 # Finance
 
-A personal finance tracker for macOS. Your data stays on your Mac in an encrypted database. There is no server and no account to sign up for.
+A private, local-first personal finance app for macOS.
 
-**Status: phases 1, 2, 3 and 6 are done.**
+Track your accounts, spending, budgets, debts and goals, run "what if" calculators, and optionally sync your banks through Plaid — all without a server, a subscription or an account. Everything lives in an encrypted database on your own Mac.
 
-- **Phase 1:** the vault, lock screen, auto-lock and recovery key.
-- **Phase 2:** accounts, balance history, net worth, transactions, categories and CSV import.
-- **Phase 3:** dashboard, budgets, goals and net worth over time.
-- **Phase 6:** live bank sync through Plaid.
+Built with [Tauri 2](https://tauri.app) (Rust) and React + TypeScript.
 
-Calculators, Touch ID and backups come next.
+> **Status: personal project, early and unsigned.** It works and I use it daily, but there are no prebuilt downloads yet — you build it from source. It's macOS-only, it hasn't been security-audited by anyone else, and the build is not signed or notarized by Apple. Treat it accordingly, and keep your recovery key safe: if you lose both your password and your recovery key, your data cannot be recovered.
 
-## Setup (one time)
+## What it does
 
-Run these in Terminal:
+- **Encrypted vault.** All data sits in a SQLCipher (AES-256) database unlocked by your master password, with a one-time recovery key as a backup. Auto-locks when idle.
+- **Accounts and net worth.** Bank accounts, cards, loans, mortgages and investments, with balance history and a net-worth-over-time chart.
+- **Transactions.** Add them by hand, import any bank's CSV export (columns are auto-detected), or sync them from your bank. Categories are learned from payees you've used before.
+- **Transfers.** Moving money between your own accounts is kept out of spending. The app spots likely transfer pairs and asks you to confirm them.
+- **Budgets.** Monthly limits per category, a budget builder that suggests limits from your last three months, and a savings/investing target.
+- **Debts.** Payoff date, payments left and interest to come for each loan; hand-entered loans update their own balance as you pay them.
+- **Goals.** Savings targets with optional dates, optionally tracking a linked account's balance.
+- **Calculators.** Retirement (straight-line and Monte Carlo), savings goal, home affordability, rent vs. buy, debt payoff (avalanche vs. snowball) and a budget-from-salary planner. Save named scenarios.
+- **Bank sync (optional).** Bring your own free [Plaid](https://plaid.com) keys. Try it with Plaid's fake Sandbox banks first; Sandbox data is kept completely separate from real data.
+- **Encrypted backups.** Export a single password-protected backup file and restore it on a fresh install.
+
+## Try it
+
+You need a Mac. Plaid is optional — the app is fully usable with manual entry and CSV import.
+
+### 1. Install the tools (one time)
 
 ```bash
-# 1. Apple command-line tools (compiler, git)
+# Apple command-line tools (compiler, git)
 xcode-select --install
 
-# 2. Rust
+# Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# 3. Node.js 20 or newer (skip this if `node -v` already shows v20+)
-#    Installer: https://nodejs.org, or with Homebrew: brew install node
-
-# 4. Project dependencies
-cd ~/repos/finance-app
-npm install
+# Node.js 20 or newer (skip if `node -v` already shows v20+)
+# Installer: https://nodejs.org, or with Homebrew: brew install node
 ```
 
-## Run
+### 2. Get the code and run it
 
 ```bash
+git clone https://github.com/navisuie/finance-app.git
+cd finance-app
+npm install
 npm run app          # development build, opens the app window
-npm test             # frontend unit tests (21)
-cargo test -p finance-core   # core, security, import and Plaid tests
-npm run app:build    # release build -> src-tauri/../target/release/bundle/
 ```
 
 The first build takes several minutes because it compiles SQLCipher and OpenSSL from source. Later builds are fast.
 
-To regenerate the full macOS icon set from `app-icon.png`, run `npx tauri icon app-icon.png`.
+On first launch you create a master password and are shown a **recovery key** once — write it down or put it in a password manager.
+
+### 3. Build a standalone app (optional)
+
+```bash
+npm run app:build    # -> target/release/bundle/macos/Finance.app (and a .dmg)
+```
+
+Because the build isn't signed with an Apple Developer ID, macOS may block it the first time. Right-click the app → **Open**, or allow it under **System Settings → Privacy & Security**.
+
+### Tests
+
+```bash
+npm test                                          # frontend unit tests
+cargo test -p finance-core                        # core, security, import, calculator and Plaid tests
+cargo clippy --workspace --all-targets -- -D warnings
+npm run audit                                     # npm + cargo dependency audit (needs cargo-audit)
+```
+
+To regenerate the macOS icon set from `app-icon.png`, run `npx tauri icon app-icon.png`.
 
 ## Using it
 
@@ -54,6 +81,7 @@ To regenerate the full macOS icon set from `app-icon.png`, run `npx tauri icon a
     - **Duplicates.** Rows you've already imported are skipped. Rows that match a transaction you entered by hand are flagged and left unchecked.
     - **Saved settings.** The column choices are remembered for that account next time. You can also save them as a named profile.
     - **Privacy.** The file is read on your Mac and never uploaded.
+* **Transfers between your accounts.** Mark a transaction as **Paid to another account** (a card payment, a loan payment, a move to savings) and it's left out of spending and income. The same payee from the same account is tagged automatically next time. The app also looks for matching pairs — the same amount leaving one account and arriving in another within 3 days — and lists them under **Possible transfers** for you to link or dismiss. It never links them on its own.
 * **Hide balances** (bottom of the sidebar) replaces every amount with •••••.
 
 ## Debts you track yourself
@@ -62,13 +90,32 @@ Not every debt comes from a bank connection. Add a car loan, a personal loan or 
 
 * **Terms.** A debt account can hold its interest rate and your usual monthly payment. With both, its page shows when it will be paid off, how many payments are left, and the interest still to come. If the payment only covers the interest, it says so and tells you the amount that would start reducing the balance.
 * **Linking payments.** On the transaction that leaves your checking account, set **Paid to another account** to the loan. That payment then counts as moving money between your own accounts, not as spending, so it stays out of your spending total and savings rate. It works for credit card payments and transfers to savings too.
-* **Keeping the balance honest.** Linked payments never change the balance by themselves, because part of each payment is interest. The debt's page adds them up ("2 payments totalling $900 since your balance on Aug 1") and suggests a new balance, including an estimate of the interest since then. **Update balance** pre-fills that figure; change it to match your statement and save.
+* **The balance goes down as you pay.** For a debt you entered yourself that has an interest rate, the balance updates on its own: your last statement balance, plus estimated interest since then, minus the payments linked to it. Enter a new statement balance with **Update balance** whenever you have one and the estimate restarts from there. Debts synced from a bank always show the bank's figure.
 
 ## Budgets, goals and net worth
 
-* **Budgets.** One monthly limit per spending category. The arrows at the top move between months (you can't look past the current month). Each category shows what you've spent, what's left and a bar; it turns amber at 85% of the limit and red once you're over, with the words next to it so it doesn't rely on colour alone. Categories without a limit are listed too, with their average over the last three months and a **Use average** button that turns it into a limit. Click a limit to edit it, Enter or click away to save, Escape to cancel, and set it to 0 to remove it. **Copy last month's budgets** fills in a fresh month. Transfers and payments linked to another account are never counted as spending.
+* **Budgets.** One monthly limit per spending category. The arrows at the top move between months (you can't look past the current month). Each category shows what you've spent, what's left and a bar; it turns amber at 85% of the limit and red once you're over, with the words next to it so it doesn't rely on colour alone. Categories without a limit are listed too, with their average over the last three months and a **Use average** button that turns it into a limit. Click a limit to edit it, Enter or click away to save, Escape to cancel, and set it to 0 to remove it. **Copy last month's budgets** fills in a fresh month, or **Build a budget** drafts one from what actually happened — income and saving from your accounts, debt payments from your loans, and each category's recent average — for you to adjust before applying.
+* **Saving & investing.** Set a monthly target for money moved into savings and investment accounts. Going over is the good outcome, so the bar never turns red. Transfers and payments linked to another account are never counted as spending.
 * **Goals.** A goal has a name, a target amount and, optionally, a date and a linked account. Linked to an account, progress is that account's balance, so it keeps itself up to date; otherwise you set the amount saved yourself. With a date, the card shows what you'd need to put aside each month, or says how far past the date you are. Goals attached to a test account only appear in Sandbox.
 * **Net worth over time.** The dashboard charts the last twelve months from your balance history — every balance you record, whether by hand, by CSV or from a bank sync, adds a point. Hover for the month's figure, or open **Show the numbers** for the assets, debts and net worth behind each point. Closed accounts still count for the months they were open. The chart follows **Hide balances** and shows sandbox data in Sandbox.
+
+## Calculators
+
+The **Calculators** page has seven planners. They're pure maths on the numbers you type in — nothing is saved to your accounts — but you can save named scenarios and load them back later.
+
+- **Retirement projection** — whether your savings support the retirement you want.
+- **Monte Carlo retirement** — the odds your money lasts, across 2,000 simulated markets, with a median line and percentile band.
+- **Savings goal** — what to set aside monthly to hit a target by a date.
+- **Home affordability** — the maximum home price under the 28/36 rule.
+- **Rent vs. buy** — net wealth under each path, year by year.
+- **Debt payoff** — avalanche vs. snowball, payoff date and total interest.
+- **Budget from a salary** — give a salary and the costs you know; it fills in the rest.
+
+These are estimates for planning, not financial advice.
+
+## Backups
+
+**Settings → Backups** exports a single encrypted backup file (your password is required, and the file is sealed with AES-256-GCM under a key derived from it). To restore, start the app on a Mac with no vault and choose **Restore from a backup instead** on the setup screen. Restore never overwrites an existing vault.
 
 ## Connecting banks with Plaid
 
@@ -165,7 +212,7 @@ recovery key ────Argon2id──▶ KEK₂ ──AES-256-GCM unwrap──
 * **Recovery key.** 256 random bits, shown once, in 13 groups of 4 characters. Using it resets your password and issues a new recovery key; the old one stops working.
 * **Changing your password** re-wraps the data key only. It is instant and the recovery key keeps working.
 * **Auto-lock is enforced by the Rust backend**, not just the UI. After the idle period (5 minutes by default, adjustable from 1 to 60), the database connection is closed and SQLCipher wipes its key from memory. The app also locks when the window closes.
-* **Locked-down webview.** A strict Content Security Policy allows no remote scripts and no network access from the UI (Plaid calls are made by the Rust backend). The webview has no permissions for the filesystem, shell, or HTTP. All sensitive work runs in Rust commands, and every data command refuses to run while the vault is locked.
+* **Locked-down webview.** A strict Content Security Policy allows no remote scripts and no network access from the UI (Plaid calls are made by the Rust backend). The webview has no permissions for the filesystem, shell, or HTTP — backup files are read and written by Rust, the UI only gets the path from a native file dialog. All sensitive work runs in Rust commands, and every data command refuses to run while the vault is locked.
 * **Minimal data.** Store only the last 4 digits of account numbers. The schema enforces this.
 
 ### Your part
@@ -177,16 +224,17 @@ recovery key ────Argon2id──▶ KEK₂ ──AES-256-GCM unwrap──
 ## Project layout
 
 ```
-crates/finance-core/   Rust: vault, crypto, schema, accounts, transactions, budgets, goals, debt maths, CSV import, Plaid (unit-tested)
+crates/finance-core/   Rust: vault, crypto, schema, accounts, transactions, budgets, goals,
+                       debt maths, transfers, calculators, CSV import, Plaid (unit-tested)
 src-tauri/             Rust: Tauri shell, IPC commands, auto-lock timer
-src/                   React + TypeScript UI (Tailwind)
+src/                   React 19 + TypeScript UI (Tailwind v4, Vite)
 ```
 
 ## Roadmap
 
-1. **Secure foundation** ✅
-2. **Accounts and transactions (manual and CSV import)** ✅
-3. **Dashboard, budgets, goals** ✅
-4. Calculators (retirement, Monte Carlo, savings goal, home affordability, rent vs buy, debt payoff)
-5. Touch ID unlock, encrypted backups, signed build
-6. **Live bank sync with Plaid** ✅
+Done: encrypted vault, accounts and transactions, CSV import, dashboard, budgets, goals, debts, transfer detection, calculators, encrypted backups, Plaid bank sync.
+
+Not yet:
+
+- Touch ID unlock
+- A signed and notarized build with downloadable releases
